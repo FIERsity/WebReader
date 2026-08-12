@@ -1,6 +1,6 @@
 import Dexie, { type EntityTable } from "dexie";
 import type { BookRecord, ReaderPreferences, ReadingLocator } from "../types/library";
-import { DEFAULT_PREFERENCES } from "../types/library";
+import { normalizePreferences } from "./preferences";
 
 interface FileRecord {
   bookId: string;
@@ -63,11 +63,11 @@ export async function removeBook(bookId: string): Promise<void> {
 
 export async function getPreferences(): Promise<ReaderPreferences> {
   const record = await db.settings.get("reader-preferences");
-  return { ...DEFAULT_PREFERENCES, ...(record?.value as Partial<ReaderPreferences> | undefined) };
+  return normalizePreferences(record?.value);
 }
 
 export async function savePreferences(preferences: ReaderPreferences): Promise<void> {
-  await db.settings.put({ key: "reader-preferences", value: preferences });
+  await db.settings.put({ key: "reader-preferences", value: normalizePreferences(preferences) });
 }
 
 export async function requestPersistentStorage(): Promise<boolean | null> {

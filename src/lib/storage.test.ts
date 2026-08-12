@@ -1,6 +1,7 @@
 import "fake-indexeddb/auto";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { BookRecord, ReadingLocator } from "../types/library";
+import { DEFAULT_PREFERENCES } from "../types/library";
 import {
   db, findByFingerprint, getBookFile, getPreferences, listBooks, removeBook,
   saveBook, savePreferences, updateLocator,
@@ -53,8 +54,16 @@ describe("local book repository", () => {
     expect(await (await getBookFile(book.id)).text()).toBe("fixture");
   });
 
-  it("merges stored preferences with current defaults", async () => {
-    await savePreferences({ theme: "night", fontScale: 1.2, lineHeight: 1.8 });
-    expect(await getPreferences()).toEqual({ theme: "night", fontScale: 1.2, lineHeight: 1.8 });
+  it("migrates stored preferences to current defaults", async () => {
+    await db.settings.put({ key: "reader-preferences", value: { theme: "night", fontScale: 1.2, lineHeight: 1.8 } });
+    expect(await getPreferences()).toEqual({
+      ...DEFAULT_PREFERENCES,
+      theme: "night",
+      fontSizePercent: 120,
+      lineHeight: 1.9,
+    });
+
+    await savePreferences({ ...DEFAULT_PREFERENCES, theme: "white", fontFamily: "sans" });
+    expect(await getPreferences()).toEqual({ ...DEFAULT_PREFERENCES, theme: "white", fontFamily: "sans" });
   });
 });

@@ -1,19 +1,24 @@
 import { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react";
 import {
   BookOpen, ChevronLeft, ChevronRight, FileText, Import, Library,
-  MessageSquare, Moon, Plus, Sun, Trash2, Type, X,
+  ListTree, MessageSquare, Plus, Settings2, Trash2, X,
 } from "lucide-react";
 import "./App.css";
+import { ReaderOutline } from "./components/ReaderOutline";
+import { ReaderSettings } from "./components/ReaderSettings";
 import { submitFeedback, MAX_FEEDBACK_LENGTH } from "./lib/feedback";
 import { BookFormatError, detectBookFormat, displayTitle, formatBytes } from "./lib/formats";
 import { fingerprintFile } from "./lib/fingerprint";
 import { resolveLanguage, translate, type Language, type TranslationKey, type TranslationVariables } from "./lib/i18n";
+import { handleReaderShortcut } from "./lib/readerShortcuts";
 import {
   findByFingerprint, getBookFile, getPreferences, listBooks, removeBook,
   requestPersistentStorage, saveBook, savePreferences, updateLocator,
 } from "./lib/storage";
 import type { BookRecord, ReaderPreferences, ReadingLocator } from "./types/library";
 import { DEFAULT_PREFERENCES } from "./types/library";
+import type { ReaderCapabilities, ReaderController, ReaderOutlineItem } from "./types/reader";
+import { NO_READER_CAPABILITIES } from "./types/reader";
 
 const EpubReader = lazy(() => import("./readers/EpubReader").then((module) => ({ default: module.EpubReader })));
 const PdfReader = lazy(() => import("./readers/PdfReader").then((module) => ({ default: module.PdfReader })));
@@ -104,9 +109,34 @@ export default function App() {
   const [message, setMessage] = useState<string>();
   const [deleteTarget, setDeleteTarget] = useState<BookRecord>();
   const [feedbackOpen, setFeedbackOpen] = useState(false);
+  const [readerPanel, setReaderPanel] = useState<"outline" | "settings">();
+  const [outline, setOutline] = useState<ReaderOutlineItem[]>([]);
+  const [automaticOutline, setAutomaticOutline] = useState(false);
+  const [currentTarget, setCurrentTarget] = useState<string>();
+  const [readerLabel, setReaderLabel] = useState<string>();
+  const [capabilities, setCapabilities] = useState<ReaderCapabilities>(NO_READER_CAPABILITIES);
   const [updateAction, setUpdateAction] = useState<(() => void) | undefined>();
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const navigationRef = useRef<{ previous: () => void; next: () => void } | null>(null);
+  const outlineButtonRef = useRef<HTMLButtonElement>(null);
+  const settingsButtonRef = useRef<HTMLButtonElement>(null);
+  const navigationRef = useRef<ReaderController | null>(null);
+  const shortcutActionsRef = useRef<{
+    previous: () => void;
+    next: () => void;
+    decreaseText: () => void;
+    increaseText: () => void;
+    toggleOutline: () => void;
+    closePanel: () => void;
+    typography: boolean;
+  }>({
+    previous: () => undefined,
+    next: () => undefined,
+    decreaseText: () => undefined,
+    increaseText: () => undefined,
+    toggleOutline: () => undefined,
+    closePanel: () => undefined,
+    typography: false,
+  });
 
   const refreshBooks = useCallback(async () => setBooks(await listBooks()), []);
 
@@ -174,6 +204,12 @@ export default function App() {
 
   const openBook = useCallback(async (book: BookRecord) => {
     setMessage(undefined);
+    setReaderPanel(undefined);
+    setOutline([]);
+    setAutomaticOutline(false);
+    setCurrentTarget(undefined);
+    setReaderLabel(book.locator?.label);
+    setCapabilities(NO_READER_CAPABILITIES);
     try {
       const file = await getBookFile(book.id);
       setActiveFile(file);
@@ -186,18 +222,65 @@ export default function App() {
   const closeReader = useCallback(async () => {
     setActiveBook(undefined);
     setActiveFile(undefined);
+    setReaderPanel(undefined);
+    setOutline([]);
+    setReaderLabel(undefined);
+    setCapabilities(NO_READER_CAPABILITIES);
     await refreshBooks();
   }, [refreshBooks]);
 
+  const activeBookId = activeBook?.id;
   const handleProgress = useCallback((locator: ReadingLocator) => {
-    if (!activeBook) return;
-    void updateLocator(activeBook.id, locator);
-  }, [activeBook]);
+    if (!activeBookId) return;
+    setReaderLabel(locator.label);
+    void updateLocator(activeBookId, locator);
+    setActiveBook((current) => current?.id === activeBookId ? { ...current, locator } : current);
+  }, [activeBookId]);
 
   const updatePreferences = useCallback((next: ReaderPreferences) => {
     setPreferences(next);
     void savePreferences(next);
   }, []);
+
+  const adjustTextSize = useCallback((delta: number) => {
+    setPreferences((current) => {
+      const next = {
+        ...current,
+        fontSizePercent: Math.min(200, Math.max(80, current.fontSizePercent + delta)),
+      };
+      void savePreferences(next);
+      return next;
+    });
+  }, []);
+
+  const handleOutline = useCallback((items: ReaderOutlineItem[], automatic = false) => {
+    setOutline(items);
+    setAutomaticOutline(automatic);
+  }, []);
+  const handleCapabilities = useCallback((next: ReaderCapabilities) => setCapabilities(next), []);
+  const handleCurrentTarget = useCallback((target?: string) => setCurrentTarget(target), []);
+  const handleLocationLabel = useCallback((label?: string) => setReaderLabel(label), []);
+  const handleReaderKeyDown = useCallback((event: KeyboardEvent) => {
+    handleReaderShortcut(event, shortcutActionsRef.current);
+  }, []);
+
+  shortcutActionsRef.current = {
+    previous: () => navigationRef.current?.previous(),
+    next: () => navigationRef.current?.next(),
+    decreaseText: () => adjustTextSize(-10),
+    increaseText: () => adjustTextSize(10),
+    toggleOutline: () => {
+      if (capabilities.outline) setReaderPanel((current) => current === "outline" ? undefined : "outline");
+    },
+    closePanel: () => setReaderPanel(undefined),
+    typography: capabilities.typography,
+  };
+
+  useEffect(() => {
+    if (!activeBook) return;
+    document.addEventListener("keydown", handleReaderKeyDown);
+    return () => document.removeEventListener("keydown", handleReaderKeyDown);
+  }, [activeBook, handleReaderKeyDown]);
 
   const confirmDelete = useCallback(async () => {
     if (!deleteTarget) return;
@@ -215,57 +298,118 @@ export default function App() {
 
   if (activeBook && activeFile) {
     return (
-      <main className={`reader-shell theme-${preferences.theme}`}>
+      <main className={`reader-shell theme-${preferences.theme} ${readerPanel ? "panel-open" : ""}`}>
         <header className="reader-toolbar">
           <button className="icon-button" type="button" onClick={() => void closeReader()} title={t("backToLibrary")} aria-label={t("backToLibrary")}>
             <ChevronLeft />
           </button>
           <div className="reader-title">
             <strong>{activeBook.title}</strong>
-            <span>{activeBook.locator?.label ?? formatLabel(activeBook.format)}</span>
+            <span>{readerLabel ?? formatLabel(activeBook.format)}</span>
           </div>
           <div className="reader-controls">
-            {activeBook.format !== "pdf" && (
-              <label className="compact-control" title={t("textSize")}>
-                <Type aria-hidden="true" />
-                <input
-                  aria-label={t("textSize")}
-                  type="range"
-                  min="0.8"
-                  max="1.5"
-                  step="0.1"
-                  value={preferences.fontScale}
-                  onChange={(event) => updatePreferences({ ...preferences, fontScale: Number(event.target.value) })}
-                />
-              </label>
-            )}
             <button
-              className="icon-button"
+              ref={outlineButtonRef}
+              className={`icon-button ${readerPanel === "outline" ? "active" : ""}`}
               type="button"
-              title={preferences.theme === "night" ? t("usePaperTheme") : t("useNightTheme")}
-              aria-label={preferences.theme === "night" ? t("usePaperTheme") : t("useNightTheme")}
-              onClick={() => updatePreferences({ ...preferences, theme: preferences.theme === "night" ? "paper" : "night" })}
+              title={t("tableOfContents")}
+              aria-label={t("tableOfContents")}
+              aria-expanded={readerPanel === "outline"}
+              disabled={!capabilities.outline}
+              onClick={() => setReaderPanel((current) => current === "outline" ? undefined : "outline")}
             >
-              {preferences.theme === "night" ? <Sun /> : <Moon />}
+              <ListTree />
+            </button>
+            <button
+              ref={settingsButtonRef}
+              className={`icon-button ${readerPanel === "settings" ? "active" : ""}`}
+              type="button"
+              title={t("readerSettings")}
+              aria-label={t("readerSettings")}
+              aria-expanded={readerPanel === "settings"}
+              onClick={() => setReaderPanel((current) => current === "settings" ? undefined : "settings")}
+            >
+              <Settings2 />
             </button>
             {languageControl}
           </div>
         </header>
-        <section className="reading-surface">
-          <Suspense fallback={<div className="reader-loading">{t("preparingBook")}</div>}>
-            {activeBook.format === "epub" && (
-              <EpubReader file={activeFile} locator={activeBook.locator} preferences={preferences} onProgress={handleProgress} navigationRef={navigationRef} t={t} />
-            )}
-            {activeBook.format === "pdf" && (
-              <PdfReader file={activeFile} locator={activeBook.locator} preferences={preferences} onProgress={handleProgress} navigationRef={navigationRef} t={t} />
-            )}
-            {activeBook.format === "txt" && (
-              <TextReader file={activeFile} locator={activeBook.locator} preferences={preferences} onProgress={handleProgress} navigationRef={navigationRef} t={t} />
-            )}
-          </Suspense>
-          <button className="page-turn page-turn-left" type="button" onClick={() => navigationRef.current?.previous()} aria-label={t("previousPage")}><ChevronLeft /></button>
-          <button className="page-turn page-turn-right" type="button" onClick={() => navigationRef.current?.next()} aria-label={t("nextPage")}><ChevronRight /></button>
-        </section>
+        <div className="reader-workspace">
+          {readerPanel === "outline" && (
+            <ReaderOutline
+              items={outline}
+              currentTarget={currentTarget}
+              automatic={automaticOutline}
+              onNavigate={(target) => {
+                navigationRef.current?.goTo?.(target);
+                setReaderPanel(undefined);
+              }}
+              onClose={() => setReaderPanel(undefined)}
+              triggerRef={outlineButtonRef}
+              t={t}
+            />
+          )}
+          <section className="reading-surface" aria-hidden={readerPanel ? true : undefined} inert={readerPanel ? true : undefined}>
+            <Suspense fallback={<div className="reader-loading">{t("preparingBook")}</div>}>
+              {activeBook.format === "epub" && (
+                <EpubReader
+                  file={activeFile}
+                  locator={activeBook.locator}
+                  preferences={preferences}
+                  onProgress={handleProgress}
+                  onOutline={handleOutline}
+                  onCapabilities={handleCapabilities}
+                  onCurrentTarget={handleCurrentTarget}
+                  onLocationLabel={handleLocationLabel}
+                  onKeyDown={handleReaderKeyDown}
+                  navigationRef={navigationRef}
+                  t={t}
+                />
+              )}
+              {activeBook.format === "pdf" && (
+                <PdfReader
+                  file={activeFile}
+                  locator={activeBook.locator}
+                  preferences={preferences}
+                  onProgress={handleProgress}
+                  onOutline={handleOutline}
+                  onCapabilities={handleCapabilities}
+                  onCurrentTarget={handleCurrentTarget}
+                  navigationRef={navigationRef}
+                  t={t}
+                />
+              )}
+              {activeBook.format === "txt" && (
+                <TextReader
+                  file={activeFile}
+                  fileName={activeBook.fileName}
+                  mediaType={activeBook.mediaType}
+                  locator={activeBook.locator}
+                  preferences={preferences}
+                  onProgress={handleProgress}
+                  onOutline={handleOutline}
+                  onCapabilities={handleCapabilities}
+                  onCurrentTarget={handleCurrentTarget}
+                  navigationRef={navigationRef}
+                  t={t}
+                />
+              )}
+            </Suspense>
+            <button className="page-turn page-turn-left" type="button" onClick={() => navigationRef.current?.previous()} aria-label={t("previousPage")}><ChevronLeft /></button>
+            <button className="page-turn page-turn-right" type="button" onClick={() => navigationRef.current?.next()} aria-label={t("nextPage")}><ChevronRight /></button>
+          </section>
+          {readerPanel === "settings" && (
+            <ReaderSettings
+              preferences={preferences}
+              typography={capabilities.typography}
+              publisherFont={capabilities.publisherFont}
+              triggerRef={settingsButtonRef}
+              onChange={updatePreferences}
+              onClose={() => setReaderPanel(undefined)}
+              t={t}
+            />
+          )}
+        </div>
       </main>
     );
   }
