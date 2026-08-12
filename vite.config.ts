@@ -13,6 +13,7 @@ export default defineConfig({
         name: "WebReader",
         short_name: "WebReader",
         description: "一款默认保护隐私、支持本地 EPUB、PDF 和文本文件的双语阅读器。",
+        lang: "zh-CN",
         theme_color: "#176b57",
         background_color: "#f7f8f5",
         display: "standalone",
