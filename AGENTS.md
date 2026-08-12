@@ -34,7 +34,7 @@ This file applies to the WebReader repository. Cross-project strategy, Git/main 
 ### Architecture
 
 - `src/App.tsx`: library and reader-shell coordination, import/delete flows, reader panels, preferences, shortcuts, and format dispatch.
-- `src/components/`: reading settings and recursive outline panels.
+- `src/components/`: reading settings, recursive outline panels, and the root interface recovery boundary.
 - `src/readers/`: isolated EPUB, PDF, and text rendering adapters.
 - `src/lib/preferences.ts`: validated migration from legacy reader preferences to the versioned preference model.
 - `src/lib/textDocument.ts`: paragraph offsets plus local Markdown/plain-text outline extraction.
@@ -48,7 +48,7 @@ This file applies to the WebReader repository. Cross-project strategy, Git/main 
 - `public/`: committed application icons and public static assets.
 - `dist/`: generated Vite/Pages artifact; never edit or commit.
 
-The stack is React, TypeScript, Vite, Dexie, foliate-js, PDF.js, Lucide, Vitest, Oxlint, and vite-plugin-pwa. EPUB, PDF, and text use separate reader adapters, capabilities, outline sources, and locator types. Reflowable EPUB/text support local typography and background preferences; fixed-layout EPUB/PDF do not expose typography controls. Source books and metadata are stored atomically in IndexedDB; the storage module is the boundary for a future OPFS migration. The Chinese/English UI defaults to Chinese and stores only the selected language locally. Explicit feedback submissions send text plus product/language labels to `https://feedback.070315.site/feedback`; no library context is attached.
+The stack is React, TypeScript, Vite, Dexie, foliate-js, PDF.js, Lucide, Vitest, Oxlint, and vite-plugin-pwa. EPUB, PDF, and text use separate reader adapters, capabilities, outline sources, and locator types. EPUB cleanup is idempotent so async initialization and React unmount cannot release the same renderer twice; the root error boundary keeps a local recovery path if a reader still fails unexpectedly. Reflowable EPUB/text support local typography and background preferences; fixed-layout EPUB/PDF do not expose typography controls. Source books and metadata are stored atomically in IndexedDB; the storage module is the boundary for a future OPFS migration. The Chinese/English UI defaults to Chinese and stores only the selected language locally. Explicit feedback submissions send text plus product/language labels to `https://feedback.070315.site/feedback`; no library context is attached.
 
 ### Commands
 

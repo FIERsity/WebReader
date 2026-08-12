@@ -40,7 +40,7 @@ export function ReaderSettings({ preferences, onChange, onClose, typography, pub
   useEffect(() => {
     const trigger = triggerRef?.current;
     closeRef.current?.focus();
-    return () => trigger?.focus();
+    return () => { if (trigger?.isConnected) trigger.focus(); };
   }, [triggerRef]);
   const visibleFontOptions = publisherFont ? fontOptions : fontOptions.filter((option) => option.value !== "publisher");
   const selectedFont = publisherFont || preferences.fontFamily !== "publisher" ? preferences.fontFamily : "serif";

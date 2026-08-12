@@ -1,4 +1,5 @@
 import { useEffect, useRef } from "react";
+import { createEpubDisposer } from "../lib/epubCleanup";
 import type { TranslationKey, TranslationVariables } from "../lib/i18n";
 import type { ReaderPreferences, ReadingLocator } from "../types/library";
 import type { ReaderCapabilities, ReaderController, ReaderOutlineItem } from "../types/reader";
@@ -74,6 +75,7 @@ export function EpubReader({
   const currentCfiRef = useRef(locator?.type === "epub" ? locator.value : undefined);
   const pendingLocatorRef = useRef<ReadingLocator | undefined>(undefined);
   const preferencesRef = useRef(preferences);
+  const relocationTimerRef = useRef<number | undefined>(undefined);
   const tRef = useRef(t);
 
   useEffect(() => { tRef.current = t; }, [t]);
@@ -87,10 +89,13 @@ export function EpubReader({
     viewRef.current = view;
 
     const initialLocation = currentCfiRef.current;
-    const loadedDocuments = new WeakSet<Document>();
+    const loadedDocuments = new Set<Document>();
     let active = true;
+    let initializationFinished = false;
+    let disposeRequested = false;
     let lastWrite = 0;
     const handleRelocate = (event: Event) => {
+      if (!active) return;
       const detail = (event as CustomEvent<{ fraction?: number; cfi?: string; tocItem?: { label?: string; href?: string } }>).detail;
       if (!detail?.cfi) return;
       currentCfiRef.current = detail.cfi;
@@ -110,39 +115,62 @@ export function EpubReader({
     };
     const handleExternalLink = (event: Event) => event.preventDefault();
     const handleLoad = (event: Event) => {
+      if (!active) return;
       const doc = (event as CustomEvent<{ doc?: Document }>).detail?.doc;
       if (!doc || loadedDocuments.has(doc)) return;
       loadedDocuments.add(doc);
       doc.addEventListener("keydown", onKeyDown);
     };
-
-    const openBook = async () => {
-      await view.open(file);
-      if (!active) {
-        view.close();
-        view.book?.destroy?.();
-        return;
-      }
-      const fixedLayout = view.book?.rendition?.layout === "pre-paginated";
-      onCapabilities({ typography: !fixedLayout, outline: Boolean(view.book?.toc?.length), publisherFont: !fixedLayout });
-      onOutline(normalizeOutline(view.book?.toc));
-      view.addEventListener("load", handleLoad);
-      view.addEventListener("relocate", handleRelocate);
-      view.addEventListener("external-link", handleExternalLink);
-      view.renderer?.setAttribute("flow", "paginated");
-      view.renderer?.setAttribute("max-inline-size", CONTENT_WIDTH[preferencesRef.current.contentWidth]);
-      view.renderer?.setAttribute("gap", "5%");
-      if (!fixedLayout) view.renderer?.setStyles?.(readerStyles(preferencesRef.current));
-      await view.init({ lastLocation: initialLocation, showTextStart: !initialLocation });
+    const dispose = createEpubDisposer({
+      view,
+      documents: loadedDocuments,
+      keydownHandler: onKeyDown as EventListener,
+      viewListeners: [
+        { type: "load", handler: handleLoad },
+        { type: "relocate", handler: handleRelocate },
+        { type: "external-link", handler: handleExternalLink },
+      ],
+    });
+    const requestDispose = () => {
+      disposeRequested = true;
+      if (initializationFinished) dispose();
     };
 
-    void openBook().catch(() => {
+    const showOpenError = () => {
+      if (!active) return;
       host.replaceChildren();
       const message = document.createElement("p");
       message.className = "reader-error";
       message.textContent = tRef.current("epubOpenFailed");
       host.append(message);
-    });
+    };
+
+    const openBook = async () => {
+      let failed = false;
+      try {
+        await view.open(file);
+        if (!active) return;
+        const fixedLayout = view.book?.rendition?.layout === "pre-paginated";
+        onCapabilities({ typography: !fixedLayout, outline: Boolean(view.book?.toc?.length), publisherFont: !fixedLayout });
+        onOutline(normalizeOutline(view.book?.toc));
+        view.addEventListener("load", handleLoad);
+        view.addEventListener("relocate", handleRelocate);
+        view.addEventListener("external-link", handleExternalLink);
+        view.renderer?.setAttribute("flow", "paginated");
+        view.renderer?.setAttribute("max-inline-size", CONTENT_WIDTH[preferencesRef.current.contentWidth]);
+        view.renderer?.setAttribute("gap", "5%");
+        if (!fixedLayout) view.renderer?.setStyles?.(readerStyles(preferencesRef.current));
+        await view.init({ lastLocation: initialLocation, showTextStart: !initialLocation });
+      } catch {
+        failed = active;
+      } finally {
+        initializationFinished = true;
+        if (failed || disposeRequested || !active) dispose();
+        if (failed) showOpenError();
+      }
+    };
+
+    void openBook();
 
     navigationRef.current = {
       previous: () => void view.prev(),
@@ -153,17 +181,10 @@ export function EpubReader({
     return () => {
       active = false;
       navigationRef.current = null;
+      if (relocationTimerRef.current !== undefined) window.clearTimeout(relocationTimerRef.current);
       if (pendingLocatorRef.current) onProgress(pendingLocatorRef.current);
-      for (const { doc } of view.renderer?.getContents?.() ?? []) doc.removeEventListener("keydown", onKeyDown);
-      view.removeEventListener("load", handleLoad);
-      view.removeEventListener("relocate", handleRelocate);
-      view.removeEventListener("external-link", handleExternalLink);
-      view.close();
-      view.book?.destroy?.();
-      view.remove();
+      requestDispose();
       viewRef.current = null;
-      onOutline([]);
-      onCapabilities({ typography: false, outline: false, publisherFont: false });
     };
   }, [file, navigationRef, onCapabilities, onCurrentTarget, onKeyDown, onLocationLabel, onOutline, onProgress]);
 
@@ -174,7 +195,11 @@ export function EpubReader({
     view.renderer?.setAttribute("max-inline-size", CONTENT_WIDTH[preferences.contentWidth]);
     view.renderer?.setStyles?.(readerStyles(preferences));
     const cfi = currentCfiRef.current;
-    if (cfi) window.setTimeout(() => void view.goTo(cfi), 0);
+    if (relocationTimerRef.current !== undefined) window.clearTimeout(relocationTimerRef.current);
+    if (cfi) relocationTimerRef.current = window.setTimeout(() => {
+      relocationTimerRef.current = undefined;
+      void view.goTo(cfi);
+    }, 0);
   }, [preferences]);
 
   return <div className="reader-stage epub-stage" ref={hostRef} />;

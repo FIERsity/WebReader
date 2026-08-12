@@ -69,7 +69,7 @@ export function ReaderOutline({ items, currentTarget, automatic, onNavigate, onC
   useEffect(() => {
     const trigger = triggerRef?.current;
     closeRef.current?.focus();
-    return () => trigger?.focus();
+    return () => { if (trigger?.isConnected) trigger.focus(); };
   }, [triggerRef]);
 
   return (

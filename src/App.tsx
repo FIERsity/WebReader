@@ -300,14 +300,10 @@ export default function App() {
     return (
       <main className={`reader-shell theme-${preferences.theme} ${readerPanel ? "panel-open" : ""}`}>
         <header className="reader-toolbar">
-          <button className="icon-button" type="button" onClick={() => void closeReader()} title={t("backToLibrary")} aria-label={t("backToLibrary")}>
-            <ChevronLeft />
-          </button>
-          <div className="reader-title">
-            <strong>{activeBook.title}</strong>
-            <span>{readerLabel ?? formatLabel(activeBook.format)}</span>
-          </div>
-          <div className="reader-controls">
+          <div className="reader-leading-controls">
+            <button className="icon-button" type="button" onClick={() => void closeReader()} title={t("backToLibrary")} aria-label={t("backToLibrary")}>
+              <ChevronLeft />
+            </button>
             <button
               ref={outlineButtonRef}
               className={`icon-button ${readerPanel === "outline" ? "active" : ""}`}
@@ -320,6 +316,12 @@ export default function App() {
             >
               <ListTree />
             </button>
+          </div>
+          <div className="reader-title">
+            <strong>{activeBook.title}</strong>
+            <span>{readerLabel ?? formatLabel(activeBook.format)}</span>
+          </div>
+          <div className="reader-controls">
             <button
               ref={settingsButtonRef}
               className={`icon-button ${readerPanel === "settings" ? "active" : ""}`}

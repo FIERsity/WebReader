@@ -42,11 +42,21 @@ export function PdfReader({
   useEffect(() => {
     const stage = stageRef.current;
     if (!stage) return;
-    const update = () => setStageWidth(stage.clientWidth);
+    let frame = 0;
+    const update = () => {
+      window.cancelAnimationFrame(frame);
+      frame = window.requestAnimationFrame(() => {
+        const width = stage.clientWidth;
+        setStageWidth((current) => current === width ? current : width);
+      });
+    };
     update();
     const observer = new ResizeObserver(update);
     observer.observe(stage);
-    return () => observer.disconnect();
+    return () => {
+      observer.disconnect();
+      window.cancelAnimationFrame(frame);
+    };
   }, []);
 
   useEffect(() => {
