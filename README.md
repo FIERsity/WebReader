@@ -1,6 +1,6 @@
 # WebReader
 
-A private-by-default web reader for local books. Import DRM-free EPUB, PDF, TXT, or Markdown files and read them without uploading book content to a server.
+A private-by-default bilingual web reader for local books. The interface supports 中文 and English and defaults to Chinese. Import DRM-free EPUB, PDF, TXT, or Markdown files and read them without uploading book content to a server.
 
 Production: https://FIERsity.github.io/WebReader/
 
@@ -10,12 +10,14 @@ Production: https://FIERsity.github.io/WebReader/
 - EPUB reading with paginated navigation and CFI progress
 - PDF rendering with PDF.js and page progress
 - TXT and Markdown reading with UTF-8/GB18030 fallback
+- Chinese/English interface with a locally remembered language choice
 - Theme and text-size preferences
+- Explicit text-only feedback submission to the developer's feedback server
 - Duplicate detection, local deletion, and a 250 MB per-file safety limit
 - Installable PWA application shell
 - Fully static GitHub Pages deployment
 
-Books, extracted content, reading progress, and preferences remain in the current browser. Clearing site data can remove the local library. PWA installation is not a backup.
+Books, extracted content, reading progress, and preferences remain in the current browser. Clearing site data can remove the local library. PWA installation is not a backup. The only runtime network exception is feedback text that the user explicitly submits; WebReader does not attach book names, files, library metadata, fingerprints, or reading history.
 
 ## Development
 
@@ -39,6 +41,7 @@ The production build uses relative paths so application chunks, PDF workers, the
 ## Privacy And Security
 
 - No accounts, analytics, telemetry, cloud storage, runtime CDN, or remote metadata lookups
+- Feedback is an explicit text-only request to `feedback.070315.site`, limited to 2000 characters. The service retains necessary connection details for rate limiting and abuse prevention; do not include sensitive information
 - Source books are stored in browser IndexedDB and never included in GitHub artifacts
 - EPUB scripted content and external network access are blocked by Content Security Policy
 - PDF JavaScript evaluation is disabled

@@ -9,7 +9,9 @@ This file applies to the WebReader repository. Cross-project strategy, Git/main 
 ## OWNER-MAINTAINED: Product Boundary
 
 - WebReader is a private-by-default, local-first browser reader.
+- The interface is bilingual Chinese/English and defaults to Chinese; user language choice is kept in the browser.
 - Imported book bytes, extracted text, covers, reading history, annotations, and search indexes must not be uploaded to GitHub or any remote service.
+- User-submitted feedback text is the only allowed runtime network exception. It may be sent to the shared feedback service only after an explicit submit action and must never include book files, names, library metadata, reading history, or fingerprints.
 - GitHub Pages hosts only the static application. GitHub Actions is CI/CD, not an application server or persistent VPS.
 - The first supported formats are DRM-free EPUB, PDF, TXT, and Markdown-as-text. DRM circumvention is out of scope.
 - Accounts, cloud storage, telemetry, analytics, public sharing, OCR, server-side conversion, and third-party book metadata requests are not added without explicit approval as a major change.
@@ -36,11 +38,13 @@ This file applies to the WebReader repository. Cross-project strategy, Git/main 
 - `src/lib/formats.ts`: file size, signature, extension, and MIME validation.
 - `src/lib/fingerprint.ts`: bounded content fingerprinting used for local duplicate detection.
 - `src/lib/storage.ts`: Dexie/IndexedDB repository for book metadata, source Blob, settings, and locators.
+- `src/lib/i18n.ts`: Chinese/English interface strings and language selection.
+- `src/lib/feedback.ts`: explicit text-only feedback request to the shared Cloudflare feedback service.
 - `src/types/`: stable publication, locator, preference, and third-party adapter types.
 - `public/`: committed application icons and public static assets.
 - `dist/`: generated Vite/Pages artifact; never edit or commit.
 
-The stack is React, TypeScript, Vite, Dexie, foliate-js, PDF.js, Lucide, Vitest, Oxlint, and vite-plugin-pwa. EPUB, PDF, and text use separate reader adapters and locator types. Source books and metadata are stored atomically in IndexedDB; the storage module is the boundary for a future OPFS migration.
+The stack is React, TypeScript, Vite, Dexie, foliate-js, PDF.js, Lucide, Vitest, Oxlint, and vite-plugin-pwa. EPUB, PDF, and text use separate reader adapters and locator types. Source books and metadata are stored atomically in IndexedDB; the storage module is the boundary for a future OPFS migration. The Chinese/English UI defaults to Chinese and stores only the selected language locally. Explicit feedback submissions send text plus product/language labels to `https://feedback.070315.site/feedback`; no library context is attached.
 
 ### Commands
 
@@ -78,7 +82,8 @@ The service worker caches only the application shell. User book data belongs in 
 - Do not trust extension or client MIME alone. Keep signature/container checks and explicit file/resource limits.
 - EPUB and other archive formats are untrusted active inputs. Keep the restrictive CSP, block scripted publication content, forms, remote resource requests, and automatic external navigation.
 - PDF.js must keep JavaScript evaluation disabled and run parsing in its worker.
-- Do not add remote fonts, runtime CDNs, metadata APIs, cover fetches, or link prefetching without a privacy and CSP review.
+- Do not add remote fonts, runtime CDNs, metadata APIs, cover fetches, link prefetching, or any network destination beyond the reviewed feedback endpoint without a privacy and CSP review.
+- Feedback requests must remain text-only, explicit, bounded to 2000 characters, and covered by client tests. Never attach book or library context. The shared service may retain connection metadata only for rate limiting, abuse prevention, and the protected feedback viewer.
 - A new format needs its own input validation, adapter, locator semantics, compatibility statement, malformed fixtures, and resource limits.
 - "Supported" means the project defines readable output, navigation, progress stability, failure behavior, and cleanup. Opening one sample is not sufficient.
 

@@ -1,4 +1,5 @@
 import { useEffect, useRef } from "react";
+import type { TranslationKey, TranslationVariables } from "../lib/i18n";
 import type { ReaderPreferences, ReadingLocator } from "../types/library";
 import "foliate-js/view.js";
 
@@ -8,6 +9,7 @@ interface EpubReaderProps {
   preferences: ReaderPreferences;
   onProgress: (locator: ReadingLocator) => void;
   navigationRef: React.RefObject<{ previous: () => void; next: () => void } | null>;
+  t: (key: TranslationKey, variables?: TranslationVariables) => string;
 }
 
 function readerStyles(preferences: ReaderPreferences): string {
@@ -27,7 +29,7 @@ function readerStyles(preferences: ReaderPreferences): string {
   `;
 }
 
-export function EpubReader({ file, locator, preferences, onProgress, navigationRef }: EpubReaderProps) {
+export function EpubReader({ file, locator, preferences, onProgress, navigationRef, t }: EpubReaderProps) {
   const hostRef = useRef<HTMLDivElement>(null);
   const viewRef = useRef<FoliateViewElement | null>(null);
   const initialLocationRef = useRef(locator?.type === "epub" ? locator.value : undefined);
@@ -73,11 +75,11 @@ export function EpubReader({ file, locator, preferences, onProgress, navigationR
       });
     };
 
-    void openBook().catch((error: unknown) => {
+    void openBook().catch(() => {
       host.replaceChildren();
       const message = document.createElement("p");
       message.className = "reader-error";
-      message.textContent = error instanceof Error ? error.message : "This EPUB could not be opened.";
+      message.textContent = t("epubOpenFailed");
       host.append(message);
     });
 
@@ -94,7 +96,7 @@ export function EpubReader({ file, locator, preferences, onProgress, navigationR
       view.remove();
       viewRef.current = null;
     };
-  }, [file, navigationRef, onProgress]);
+  }, [file, navigationRef, onProgress, t]);
 
   useEffect(() => {
     preferencesRef.current = preferences;

@@ -1,4 +1,5 @@
 import type { BookFormat } from "../types/library";
+import type { TranslationKey } from "./i18n";
 
 export const MAX_FILE_SIZE = 250 * 1024 * 1024;
 
@@ -6,10 +7,19 @@ const EPUB_MIME = "application/epub+zip";
 const PDF_MIME = "application/pdf";
 const TEXT_MIMES = new Set(["text/plain", "text/markdown"]);
 
+export class BookFormatError extends Error {
+  readonly translationKey: TranslationKey;
+
+  constructor(translationKey: TranslationKey) {
+    super(translationKey);
+    this.translationKey = translationKey;
+  }
+}
+
 export async function detectBookFormat(file: File): Promise<BookFormat> {
-  if (file.size === 0) throw new Error("The selected file is empty.");
+  if (file.size === 0) throw new BookFormatError("emptyFile");
   if (file.size > MAX_FILE_SIZE) {
-    throw new Error("This file is larger than the current 250 MB safety limit.");
+    throw new BookFormatError("fileTooLarge");
   }
 
   const extension = file.name.split(".").pop()?.toLowerCase();
@@ -24,7 +34,7 @@ export async function detectBookFormat(file: File): Promise<BookFormat> {
   if (isZip && (file.type === EPUB_MIME || extension === "epub")) return "epub";
   if (TEXT_MIMES.has(file.type) || extension === "txt" || extension === "md") return "txt";
 
-  throw new Error("WebReader currently supports EPUB, PDF, TXT, and Markdown files.");
+  throw new BookFormatError("unsupportedFormat");
 }
 
 export function displayTitle(fileName: string): string {

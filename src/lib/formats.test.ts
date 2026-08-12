@@ -14,13 +14,13 @@ describe("detectBookFormat", () => {
   it("accepts a ZIP signature only when identified as EPUB", async () => {
     const zip = [0x50, 0x4b, 0x03, 0x04];
     await expect(detectBookFormat(file(zip, "book.epub"))).resolves.toBe("epub");
-    await expect(detectBookFormat(file(zip, "archive.zip"))).rejects.toThrow(/supports EPUB/);
+    await expect(detectBookFormat(file(zip, "archive.zip"))).rejects.toMatchObject({ translationKey: "unsupportedFormat" });
   });
 
   it("rejects empty and oversized files", async () => {
-    await expect(detectBookFormat(new File([], "empty.txt", { type: "text/plain" }))).rejects.toThrow(/empty/);
+    await expect(detectBookFormat(new File([], "empty.txt", { type: "text/plain" }))).rejects.toMatchObject({ translationKey: "emptyFile" });
     const oversized = { name: "large.pdf", type: "application/pdf", size: MAX_FILE_SIZE + 1 } as File;
-    await expect(detectBookFormat(oversized)).rejects.toThrow(/250 MB/);
+    await expect(detectBookFormat(oversized)).rejects.toMatchObject({ translationKey: "fileTooLarge" });
   });
 });
 

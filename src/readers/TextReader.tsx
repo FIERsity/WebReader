@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import type { TranslationKey, TranslationVariables } from "../lib/i18n";
 import type { ReaderPreferences, ReadingLocator } from "../types/library";
 
 interface TextReaderProps {
@@ -7,6 +8,7 @@ interface TextReaderProps {
   preferences: ReaderPreferences;
   onProgress: (locator: ReadingLocator) => void;
   navigationRef: React.RefObject<{ previous: () => void; next: () => void } | null>;
+  t: (key: TranslationKey, variables?: TranslationVariables) => string;
 }
 
 async function decodeText(file: Blob): Promise<string> {
@@ -22,7 +24,7 @@ async function decodeText(file: Blob): Promise<string> {
   }
 }
 
-export function TextReader({ file, locator, preferences, onProgress, navigationRef }: TextReaderProps) {
+export function TextReader({ file, locator, preferences, onProgress, navigationRef, t }: TextReaderProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const [text, setText] = useState("");
   const [error, setError] = useState<string>();
@@ -31,11 +33,11 @@ export function TextReader({ file, locator, preferences, onProgress, navigationR
     let active = true;
     void decodeText(file).then((value) => {
       if (active) setText(value.replace(/^\uFEFF/, ""));
-    }).catch((reason: unknown) => {
-      if (active) setError(reason instanceof Error ? reason.message : "This text file could not be decoded.");
+    }).catch(() => {
+      if (active) setError(t("textDecodeFailed"));
     });
     return () => { active = false; };
-  }, [file]);
+  }, [file, t]);
 
   useEffect(() => {
     const element = scrollRef.current;
@@ -83,7 +85,7 @@ export function TextReader({ file, locator, preferences, onProgress, navigationR
   return (
     <div className={`reader-stage text-stage theme-${preferences.theme}`} ref={scrollRef}>
       <article style={{ fontSize: `${preferences.fontScale}rem`, lineHeight: preferences.lineHeight }}>
-        {text || "Loading text..."}
+        {text || t("loadingText")}
       </article>
     </div>
   );

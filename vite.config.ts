@@ -12,7 +12,7 @@ export default defineConfig({
       manifest: {
         name: "WebReader",
         short_name: "WebReader",
-        description: "A private-by-default reader for local EPUB, PDF, and text files.",
+        description: "一款默认保护隐私、支持本地 EPUB、PDF 和文本文件的双语阅读器。",
         theme_color: "#176b57",
         background_color: "#f7f8f5",
         display: "standalone",

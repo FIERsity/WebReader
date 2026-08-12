@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { GlobalWorkerOptions, getDocument, type PDFDocumentProxy } from "pdfjs-dist";
+import type { TranslationKey, TranslationVariables } from "../lib/i18n";
 import type { ReaderPreferences, ReadingLocator } from "../types/library";
 import pdfWorkerUrl from "pdfjs-dist/build/pdf.worker.min.mjs?url";
 
@@ -11,9 +12,10 @@ interface PdfReaderProps {
   preferences: ReaderPreferences;
   onProgress: (locator: ReadingLocator) => void;
   navigationRef: React.RefObject<{ previous: () => void; next: () => void } | null>;
+  t: (key: TranslationKey, variables?: TranslationVariables) => string;
 }
 
-export function PdfReader({ file, locator, preferences, onProgress, navigationRef }: PdfReaderProps) {
+export function PdfReader({ file, locator, preferences, onProgress, navigationRef, t }: PdfReaderProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const documentRef = useRef<PDFDocumentProxy | null>(null);
   const [pageNumber, setPageNumber] = useState(() => {
@@ -38,15 +40,15 @@ export function PdfReader({ file, locator, preferences, onProgress, navigationRe
       documentRef.current = pdf;
       setPageCount(pdf.numPages);
       setPageNumber((current) => Math.min(current, pdf.numPages));
-    }).catch((reason: unknown) => {
-      if (active) setError(reason instanceof Error ? reason.message : "This PDF could not be opened.");
+    }).catch(() => {
+      if (active) setError(t("pdfOpenFailed"));
     });
     return () => {
       active = false;
       documentRef.current = null;
       void task?.destroy();
     };
-  }, [file]);
+  }, [file, t]);
 
   useEffect(() => {
     const pdf = documentRef.current;
@@ -62,7 +64,7 @@ export function PdfReader({ file, locator, preferences, onProgress, navigationRe
       const scale = Math.min(2.25, Math.max(0.7, availableWidth / base.width));
       const viewport = page.getViewport({ scale });
       const context = canvas.getContext("2d", { alpha: false });
-      if (!context) throw new Error("Canvas is unavailable in this browser.");
+      if (!context) throw new Error(t("canvasUnavailable"));
       const outputScale = Math.min(window.devicePixelRatio || 1, 2);
       canvas.width = Math.floor(viewport.width * outputScale);
       canvas.height = Math.floor(viewport.height * outputScale);
@@ -73,7 +75,7 @@ export function PdfReader({ file, locator, preferences, onProgress, navigationRe
       return renderTask.promise;
     }).catch((reason: unknown) => {
       if ((reason as { name?: string })?.name !== "RenderingCancelledException") {
-        setError(reason instanceof Error ? reason.message : "The PDF page could not be rendered.");
+        setError(t("pdfRenderFailed"));
       }
     });
 
@@ -81,14 +83,14 @@ export function PdfReader({ file, locator, preferences, onProgress, navigationRe
       type: "pdf",
       value: String(pageNumber),
       progression: pageCount <= 1 ? 1 : (pageNumber - 1) / (pageCount - 1),
-      label: `Page ${pageNumber}`,
+      label: t("page", { page: pageNumber }),
     });
 
     return () => {
       cancelled = true;
       renderTask?.cancel();
     };
-  }, [onProgress, pageCount, pageNumber]);
+  }, [onProgress, pageCount, pageNumber, t]);
 
   useEffect(() => {
     navigationRef.current = {
@@ -102,7 +104,7 @@ export function PdfReader({ file, locator, preferences, onProgress, navigationRe
 
   return (
     <div className={`reader-stage pdf-stage theme-${preferences.theme}`}>
-      <canvas ref={canvasRef} aria-label={`PDF page ${pageNumber} of ${pageCount || "..."}`} />
+      <canvas ref={canvasRef} aria-label={t("pdfPage", { page: pageNumber, total: pageCount || "..." })} />
       <div className="page-status" aria-live="polite">{pageNumber} / {pageCount || "..."}</div>
     </div>
   );
