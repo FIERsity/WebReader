@@ -1,5 +1,6 @@
 import { useEffect, useRef } from "react";
 import { createEpubDisposer } from "../lib/epubCleanup";
+import { buildEpubStyles } from "../lib/epubStyles";
 import type { TranslationKey, TranslationVariables } from "../lib/i18n";
 import type { ReaderPreferences, ReadingLocator } from "../types/library";
 import type { ReaderCapabilities, ReaderController, ReaderOutlineItem } from "../types/reader";
@@ -20,42 +21,6 @@ interface EpubReaderProps {
 }
 
 const CONTENT_WIDTH = { narrow: "600px", standard: "720px", wide: "880px" } as const;
-const FONT_STACK = {
-  serif: 'Georgia, "Songti SC", "Noto Serif CJK SC", serif',
-  sans: '-apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Noto Sans CJK SC", sans-serif',
-} as const;
-
-function readerStyles(preferences: ReaderPreferences): string {
-  const colors = preferences.theme === "night"
-    ? { background: "#171918", text: "#e5e8e2", link: "#9dd0bf" }
-    : preferences.theme === "contrast"
-      ? { background: "#ffffff", text: "#050505", link: "#005fcc" }
-      : preferences.theme === "white"
-        ? { background: "#ffffff", text: "#222522", link: "#12634f" }
-        : { background: "#f5f1e8", text: "#292a27", link: "#176b57" };
-  const font = preferences.fontFamily === "publisher" ? "" : `
-    body, p, li, blockquote, dd { font-family: ${FONT_STACK[preferences.fontFamily]} !important; }
-  `;
-  const indent = `body p:not(li p):not(blockquote p) { text-indent: ${preferences.paragraphIndent}em !important; }`;
-  return `
-    :root {
-      --theme-bg-color: ${colors.background};
-      color-scheme: ${preferences.theme === "night" ? "dark" : "light"};
-      background: ${colors.background} !important;
-      color: ${colors.text} !important;
-      font-size: ${preferences.fontSizePercent}% !important;
-    }
-    html { background-image: none !important; }
-    body { background: transparent !important; color: ${colors.text} !important; line-height: ${preferences.lineHeight} !important; padding: 0 0.5rem; }
-    body, p, li, blockquote, dd { font-size: 1rem !important; }
-    p, li, blockquote, dd { line-height: ${preferences.lineHeight} !important; }
-    ${font}
-    ${indent}
-    img, svg { max-width: 100%; max-height: 92vh; object-fit: contain; }
-    a { color: ${colors.link} !important; }
-    pre { white-space: pre-wrap; }
-  `;
-}
 
 function normalizeOutline(items: FoliateTocItem[] | undefined, path = "epub"): ReaderOutlineItem[] {
   return (items ?? []).map((item, index) => ({
@@ -159,7 +124,7 @@ export function EpubReader({
         view.renderer?.setAttribute("flow", "paginated");
         view.renderer?.setAttribute("max-inline-size", CONTENT_WIDTH[preferencesRef.current.contentWidth]);
         view.renderer?.setAttribute("gap", "5%");
-        if (!fixedLayout) view.renderer?.setStyles?.(readerStyles(preferencesRef.current));
+        if (!fixedLayout) view.renderer?.setStyles?.(buildEpubStyles(preferencesRef.current));
         await view.init({ lastLocation: initialLocation, showTextStart: !initialLocation });
       } catch {
         failed = active;
@@ -193,7 +158,7 @@ export function EpubReader({
     const view = viewRef.current;
     if (!view || view.book?.rendition?.layout === "pre-paginated") return;
     view.renderer?.setAttribute("max-inline-size", CONTENT_WIDTH[preferences.contentWidth]);
-    view.renderer?.setStyles?.(readerStyles(preferences));
+    view.renderer?.setStyles?.(buildEpubStyles(preferences));
     const cfi = currentCfiRef.current;
     if (relocationTimerRef.current !== undefined) window.clearTimeout(relocationTimerRef.current);
     if (cfi) relocationTimerRef.current = window.setTimeout(() => {

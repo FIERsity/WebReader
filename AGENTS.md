@@ -37,6 +37,7 @@ This file applies to the WebReader repository. Cross-project strategy, Git/main 
 - `src/components/`: reading settings, recursive outline panels, and the root interface recovery boundary.
 - `src/readers/`: isolated EPUB, PDF, and text rendering adapters.
 - `src/lib/preferences.ts`: validated migration from legacy reader preferences to the versioned preference model.
+- `src/lib/epubStyles.ts`: paired EPUB theme colors for body text, text surfaces, and code surfaces without recoloring publication media or removing CSS background images.
 - `src/lib/textDocument.ts`: paragraph offsets plus local Markdown/plain-text outline extraction.
 - `src/lib/pdfOutline.ts`: local PDF outline destination resolution.
 - `src/lib/formats.ts`: file size, signature, extension, and MIME validation.
