@@ -20,6 +20,11 @@ declare global {
       destroy?: () => void;
     };
     renderer?: HTMLElement & {
+      scrolled: boolean;
+      size: number;
+      viewSize: number;
+      start: number;
+      end: number;
       setStyles?: (styles: string) => void;
       setAttribute: (name: string, value: string) => void;
       getContents?: () => Array<{ doc: Document }>;

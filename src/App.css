@@ -83,7 +83,7 @@ h2 { margin: 0; font-size: 20px; }
 .book-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 14px; }
 .book-card { min-width: 0; position: relative; border: 1px solid var(--line); border-radius: 7px; background: var(--panel); overflow: hidden; transition: border-color .15s, box-shadow .15s; }
 .book-card:hover { border-color: #bfc8bd; box-shadow: 0 5px 15px rgba(47, 57, 48, .07); }
-.book-open { width: 100%; min-height: 160px; padding: 18px; border: 0; display: grid; grid-template-columns: 86px minmax(0,1fr); gap: 16px; background: transparent; cursor: pointer; text-align: left; }
+.book-open { width: 100%; min-height: 176px; padding: 18px 18px 34px; border: 0; display: grid; grid-template-columns: 86px minmax(0,1fr); gap: 16px; background: transparent; cursor: pointer; text-align: left; }
 .book-cover { height: 122px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; color: white; border-radius: 3px; box-shadow: 0 5px 12px rgba(24,32,27,.14); }
 .book-cover svg { width: 28px; height: 28px; }
 .book-cover span { font-size: 10px; font-weight: 800; }
@@ -99,6 +99,13 @@ h2 { margin: 0; font-size: 20px; }
 .card-menu { position: absolute; right: 10px; top: 10px; width: 32px; height: 32px; border: 0; border-radius: 4px; display: grid; place-items: center; cursor: pointer; background: transparent; color: #848a82; }
 .card-menu:hover { color: #9a312a; background: #f7e9e7; }
 .card-menu svg { width: 16px; }
+.reading-profile-switch {
+  position: absolute; right: 10px; bottom: 10px; padding: 2px; display: inline-grid; grid-template-columns: repeat(2, 38px); gap: 2px;
+  border: 1px solid #cbd2c9; border-radius: 5px; background: rgba(255,255,255,.92);
+}
+.reading-profile-switch button { height: 25px; padding: 0; border: 0; border-radius: 3px; color: #666d65; background: transparent; cursor: pointer; font-size: 10px; font-weight: 700; }
+.reading-profile-switch button:hover { color: var(--green-dark); background: #edf2ed; }
+.reading-profile-switch button.active { color: white; background: var(--green); }
 
 .dialog-backdrop { position: fixed; inset: 0; z-index: 20; padding: 24px; display: grid; place-items: center; background: rgba(26,30,27,.42); }
 .dialog { width: min(420px, 100%); padding: 26px; background: white; border-radius: 8px; box-shadow: 0 22px 70px rgba(0,0,0,.23); }
@@ -186,6 +193,10 @@ h2 { margin: 0; font-size: 20px; }
 .pdf-stage.theme-night { background: #101211; }
 .pdf-stage.theme-contrast { background: #fff; }
 .pdf-stage canvas { display: block; margin: 0 auto; background: white; box-shadow: 0 8px 28px rgba(0,0,0,.18); }
+.pdf-continuous { padding: 24px 24px 70px; }
+.continuous-pdf-track { width: min(1100px, 100%); margin: 0 auto; position: relative; }
+.continuous-pdf-page { position: absolute; left: 0; right: 0; padding-bottom: 18px; display: grid; place-items: start center; }
+.continuous-pdf-page canvas { max-width: 100%; max-height: calc(100% - 18px); width: auto; height: auto; }
 .page-status { position: fixed; z-index: 4; left: 50%; bottom: 14px; transform: translateX(-50%); padding: 5px 10px; border-radius: 4px; color: white; background: rgba(30,33,31,.78); font-size: 11px; }
 .text-stage { overflow: auto; padding: 52px 82px 100px; background: #f5f1e8; }
 .text-stage.theme-white { background: #fff; color: #222522; }

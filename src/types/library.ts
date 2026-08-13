@@ -1,4 +1,5 @@
 export type BookFormat = "epub" | "pdf" | "txt";
+export type ReadingProfile = "book" | "article";
 
 export type ReaderTheme = "white" | "paper" | "night" | "contrast";
 export type ReaderFontFamily = "publisher" | "serif" | "sans";
@@ -17,6 +18,7 @@ export interface BookRecord {
   title: string;
   author?: string;
   format: BookFormat;
+  readingProfile: ReadingProfile;
   fileName: string;
   mediaType: string;
   size: number;

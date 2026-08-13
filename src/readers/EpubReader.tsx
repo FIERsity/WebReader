@@ -2,11 +2,13 @@ import { useEffect, useRef } from "react";
 import { createEpubDisposer } from "../lib/epubCleanup";
 import { buildEpubStyles } from "../lib/epubStyles";
 import type { TranslationKey, TranslationVariables } from "../lib/i18n";
-import type { ReaderPreferences, ReadingLocator } from "../types/library";
+import type { ReaderPreferences, ReadingLocator, ReadingProfile } from "../types/library";
+import { WheelGesture, normalizedWheelDelta, shouldIgnoreWheel } from "../lib/wheelPager";
 import type { ReaderCapabilities, ReaderController, ReaderOutlineItem } from "../types/reader";
 import "foliate-js/view.js";
 
 interface EpubReaderProps {
+  readingProfile: ReadingProfile;
   file: Blob;
   locator?: ReadingLocator;
   preferences: ReaderPreferences;
@@ -32,7 +34,7 @@ function normalizeOutline(items: FoliateTocItem[] | undefined, path = "epub"): R
 }
 
 export function EpubReader({
-  file, locator, preferences, onProgress, onOutline, onCapabilities, onCurrentTarget,
+  readingProfile, file, locator, preferences, onProgress, onOutline, onCapabilities, onCurrentTarget,
   onLocationLabel, onKeyDown, navigationRef, t,
 }: EpubReaderProps) {
   const hostRef = useRef<HTMLDivElement>(null);
@@ -55,6 +57,8 @@ export function EpubReader({
 
     const initialLocation = currentCfiRef.current;
     const loadedDocuments = new Set<Document>();
+    const wheelDocuments = new Set<Document>();
+    const wheelGesture = new WheelGesture();
     let active = true;
     let initializationFinished = false;
     let disposeRequested = false;
@@ -79,12 +83,46 @@ export function EpubReader({
       onProgress(next);
     };
     const handleExternalLink = (event: Event) => event.preventDefault();
+    const handleWheel = (event: WheelEvent) => {
+      if (shouldIgnoreWheel(event)) return;
+      const renderer = view.renderer;
+      if (!renderer) return;
+      const delta = normalizedWheelDelta(event, renderer.clientHeight || window.innerHeight);
+      if (!delta) return;
+
+      if (readingProfile === "article" && renderer.scrolled) {
+        const atStart = renderer.start <= 1;
+        const atEnd = renderer.viewSize - renderer.end <= 2;
+        const eligible = (delta < 0 && atStart) || (delta > 0 && atEnd);
+        const direction = wheelGesture.push(delta, event.timeStamp, eligible);
+        if (!eligible || !direction) return;
+        event.preventDefault();
+        void (direction === "previous" ? view.prev() : view.next());
+        return;
+      }
+
+      event.preventDefault();
+      const direction = wheelGesture.push(delta, event.timeStamp);
+      if (direction === "previous") void view.prev();
+      else if (direction === "next") void view.next();
+    };
     const handleLoad = (event: Event) => {
       if (!active) return;
       const doc = (event as CustomEvent<{ doc?: Document }>).detail?.doc;
       if (!doc || loadedDocuments.has(doc)) return;
+      const currentDocuments = new Set(view.renderer?.getContents?.().map((content) => content.doc) ?? []);
+      currentDocuments.add(doc);
+      for (const previousDoc of loadedDocuments) {
+        if (currentDocuments.has(previousDoc)) continue;
+        previousDoc.removeEventListener("keydown", onKeyDown);
+        previousDoc.removeEventListener("wheel", handleWheel);
+        loadedDocuments.delete(previousDoc);
+        wheelDocuments.delete(previousDoc);
+      }
       loadedDocuments.add(doc);
+      wheelDocuments.add(doc);
       doc.addEventListener("keydown", onKeyDown);
+      doc.addEventListener("wheel", handleWheel, { passive: false });
     };
     const dispose = createEpubDisposer({
       view,
@@ -121,9 +159,10 @@ export function EpubReader({
         view.addEventListener("load", handleLoad);
         view.addEventListener("relocate", handleRelocate);
         view.addEventListener("external-link", handleExternalLink);
-        view.renderer?.setAttribute("flow", "paginated");
+        view.renderer?.setAttribute("flow", readingProfile === "article" && !fixedLayout ? "scrolled" : "paginated");
         view.renderer?.setAttribute("max-inline-size", CONTENT_WIDTH[preferencesRef.current.contentWidth]);
         view.renderer?.setAttribute("gap", "5%");
+        view.renderer?.addEventListener("wheel", handleWheel, { passive: false });
         if (!fixedLayout) view.renderer?.setStyles?.(buildEpubStyles(preferencesRef.current));
         await view.init({ lastLocation: initialLocation, showTextStart: !initialLocation });
       } catch {
@@ -146,12 +185,16 @@ export function EpubReader({
     return () => {
       active = false;
       navigationRef.current = null;
+      view.renderer?.removeEventListener("wheel", handleWheel);
+      for (const doc of wheelDocuments) doc.removeEventListener("wheel", handleWheel);
+      wheelDocuments.clear();
+      wheelGesture.reset();
       if (relocationTimerRef.current !== undefined) window.clearTimeout(relocationTimerRef.current);
       if (pendingLocatorRef.current) onProgress(pendingLocatorRef.current);
       requestDispose();
       viewRef.current = null;
     };
-  }, [file, navigationRef, onCapabilities, onCurrentTarget, onKeyDown, onLocationLabel, onOutline, onProgress]);
+  }, [file, navigationRef, onCapabilities, onCurrentTarget, onKeyDown, onLocationLabel, onOutline, onProgress, readingProfile]);
 
   useEffect(() => {
     preferencesRef.current = preferences;

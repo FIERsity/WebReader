@@ -40,6 +40,8 @@ This file applies to the WebReader repository. Cross-project strategy, Git/main 
 - `src/lib/epubStyles.ts`: paired EPUB theme colors for body text, text surfaces, and code surfaces without recoloring publication media or removing CSS background images.
 - `src/lib/textDocument.ts`: paragraph offsets plus local Markdown/plain-text outline extraction.
 - `src/lib/pdfOutline.ts`: local PDF outline destination resolution.
+- `src/lib/pdfLayout.ts`: bounded continuous-PDF page windows, real page geometry, and stable page-relative scroll restoration.
+- `src/lib/wheelPager.ts`: one-turn-per-gesture mouse-wheel pagination with boundary eligibility for scrollable pages.
 - `src/lib/formats.ts`: file size, signature, extension, and MIME validation.
 - `src/lib/fingerprint.ts`: bounded content fingerprinting used for local duplicate detection.
 - `src/lib/storage.ts`: Dexie/IndexedDB repository for book metadata, source Blob, settings, and locators.
@@ -49,7 +51,7 @@ This file applies to the WebReader repository. Cross-project strategy, Git/main 
 - `public/`: committed application icons and public static assets.
 - `dist/`: generated Vite/Pages artifact; never edit or commit.
 
-The stack is React, TypeScript, Vite, Dexie, foliate-js, PDF.js, Lucide, Vitest, Oxlint, and vite-plugin-pwa. EPUB, PDF, and text use separate reader adapters, capabilities, outline sources, and locator types. EPUB cleanup is idempotent so async initialization and React unmount cannot release the same renderer twice; the root error boundary keeps a local recovery path if a reader still fails unexpectedly. Reflowable EPUB/text support local typography and background preferences; fixed-layout EPUB/PDF do not expose typography controls. Source books and metadata are stored atomically in IndexedDB; the storage module is the boundary for a future OPFS migration. The Chinese/English UI defaults to Chinese and stores only the selected language locally. Explicit feedback submissions send text plus product/language labels to `https://feedback.070315.site/feedback`; no library context is attached.
+The stack is React, TypeScript, Vite, Dexie, foliate-js, PDF.js, Lucide, Vitest, Oxlint, and vite-plugin-pwa. EPUB, PDF, and text use separate reader adapters, capabilities, outline sources, and locator types. EPUB cleanup is idempotent so async initialization and React unmount cannot release the same renderer twice; the root error boundary keeps a local recovery path if a reader still fails unexpectedly. Reflowable EPUB/text support local typography and background preferences; fixed-layout EPUB/PDF do not expose typography controls. Source books and metadata are stored atomically in IndexedDB; Dexie version 2 adds a per-document `book | article` reading profile and migrates older records to `book` without changing source bytes or locators. The storage module remains the boundary for a future OPFS migration. Book mode supports wheel page turns using a gesture accumulator; Paper mode uses native vertical scrolling. Reflowable EPUB uses chapter-continuous Foliate scrolling, PDF uses a bounded window of Canvas pages with page-relative locators, and text remains a local scrolling document. TXT and Markdown imports are limited to 8 MB because they are decoded and rendered into browser memory and DOM. The Chinese/English UI defaults to Chinese and stores only the selected language locally. Explicit feedback submissions send text plus product/language labels to `https://feedback.070315.site/feedback`; no library context is attached.
 
 ### Commands
 

@@ -2,6 +2,7 @@ import type { BookFormat } from "../types/library";
 import type { TranslationKey } from "./i18n";
 
 export const MAX_FILE_SIZE = 250 * 1024 * 1024;
+export const MAX_TEXT_FILE_SIZE = 8 * 1024 * 1024;
 
 const EPUB_MIME = "application/epub+zip";
 const PDF_MIME = "application/pdf";
@@ -23,6 +24,8 @@ export async function detectBookFormat(file: File): Promise<BookFormat> {
   }
 
   const extension = file.name.split(".").pop()?.toLowerCase();
+  const textHint = TEXT_MIMES.has(file.type) || extension === "txt" || extension === "md";
+  if (textHint && file.size > MAX_TEXT_FILE_SIZE) throw new BookFormatError("textFileTooLarge");
   const head = new Uint8Array(await file.slice(0, 8).arrayBuffer());
   const isPdf = String.fromCharCode(...head.slice(0, 5)) === "%PDF-";
   const isZip = head[0] === 0x50 && head[1] === 0x4b
@@ -32,7 +35,7 @@ export async function detectBookFormat(file: File): Promise<BookFormat> {
 
   if (isPdf && (file.type === PDF_MIME || extension === "pdf")) return "pdf";
   if (isZip && (file.type === EPUB_MIME || extension === "epub")) return "epub";
-  if (TEXT_MIMES.has(file.type) || extension === "txt" || extension === "md") return "txt";
+  if (textHint) return "txt";
 
   throw new BookFormatError("unsupportedFormat");
 }

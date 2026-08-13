@@ -1,10 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { TranslationKey, TranslationVariables } from "../lib/i18n";
 import { extractMarkdownOutline, extractTextOutline, splitTextBlocks } from "../lib/textDocument";
-import type { ReaderPreferences, ReadingLocator } from "../types/library";
+import type { ReaderPreferences, ReadingLocator, ReadingProfile } from "../types/library";
+import { WheelGesture, normalizedWheelDelta, shouldIgnoreWheel } from "../lib/wheelPager";
 import type { ReaderCapabilities, ReaderController, ReaderOutlineItem } from "../types/reader";
 
 interface TextReaderProps {
+  readingProfile: ReadingProfile;
   file: Blob;
   fileName: string;
   mediaType: string;
@@ -39,7 +41,7 @@ async function decodeText(file: Blob): Promise<string> {
 }
 
 export function TextReader({
-  file, fileName, mediaType, locator, preferences, onProgress, onOutline,
+  readingProfile, file, fileName, mediaType, locator, preferences, onProgress, onOutline,
   onCapabilities, onCurrentTarget, navigationRef, t,
 }: TextReaderProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -47,6 +49,7 @@ export function TextReader({
   const currentOffsetRef = useRef(locator?.type === "text" ? Number(locator.value) || 0 : 0);
   const restoringRef = useRef(false);
   const pendingSaveRef = useRef<ReadingLocator | undefined>(undefined);
+  const wheelGestureRef = useRef(new WheelGesture());
   const [text, setText] = useState("");
   const [error, setError] = useState<TranslationKey>();
   const blocks = useMemo(() => splitTextBlocks(text), [text]);
@@ -81,8 +84,8 @@ export function TextReader({
     if (!node) return;
     restoringRef.current = true;
     const fraction = block.text.length > 0 ? Math.min(1, Math.max(0, (offset - block.start) / block.text.length)) : 0;
-    const withinBlock = Math.max(0, node.offsetHeight - element.clientHeight * 0.25) * fraction;
-    element.scrollTop = Math.max(0, node.offsetTop - 24 + withinBlock);
+    const withinBlock = node.offsetHeight * fraction;
+    element.scrollTop = Math.max(0, node.offsetTop - 32 + withinBlock);
     requestAnimationFrame(() => { restoringRef.current = false; });
   }, [blocks]);
 
@@ -133,6 +136,26 @@ export function TextReader({
       element.removeEventListener("scroll", save);
     };
   }, [blocks, onCurrentTarget, onProgress, text.length]);
+
+  useEffect(() => {
+    const element = scrollRef.current;
+    if (!element || readingProfile === "article") return;
+    const handleWheel = (event: WheelEvent) => {
+      if (shouldIgnoreWheel(event)) return;
+      const delta = normalizedWheelDelta(event, element.clientHeight);
+      if (!delta) return;
+      event.preventDefault();
+      const direction = wheelGestureRef.current.push(delta, event.timeStamp);
+      if (!direction) return;
+      element.scrollTop += (direction === "previous" ? -1 : 1) * element.clientHeight * 0.86;
+    };
+    const gesture = wheelGestureRef.current;
+    element.addEventListener("wheel", handleWheel, { passive: false });
+    return () => {
+      element.removeEventListener("wheel", handleWheel);
+      gesture.reset();
+    };
+  }, [readingProfile]);
 
   useEffect(() => {
     navigationRef.current = {

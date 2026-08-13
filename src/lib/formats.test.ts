@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { detectBookFormat, displayTitle, formatBytes, MAX_FILE_SIZE } from "./formats";
+import { detectBookFormat, displayTitle, formatBytes, MAX_FILE_SIZE, MAX_TEXT_FILE_SIZE } from "./formats";
 
 function file(bytes: number[], name: string, type = ""): File {
   return new File([new Uint8Array(bytes)], name, { type });
@@ -21,6 +21,11 @@ describe("detectBookFormat", () => {
     await expect(detectBookFormat(new File([], "empty.txt", { type: "text/plain" }))).rejects.toMatchObject({ translationKey: "emptyFile" });
     const oversized = { name: "large.pdf", type: "application/pdf", size: MAX_FILE_SIZE + 1 } as File;
     await expect(detectBookFormat(oversized)).rejects.toMatchObject({ translationKey: "fileTooLarge" });
+  });
+
+  it("uses a lower safety limit for text rendered into browser DOM", async () => {
+    const oversizedText = { name: "large.md", type: "text/markdown", size: MAX_TEXT_FILE_SIZE + 1 } as File;
+    await expect(detectBookFormat(oversizedText)).rejects.toMatchObject({ translationKey: "textFileTooLarge" });
   });
 });
 

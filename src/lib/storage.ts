@@ -1,5 +1,5 @@
 import Dexie, { type EntityTable } from "dexie";
-import type { BookRecord, ReaderPreferences, ReadingLocator } from "../types/library";
+import type { BookRecord, ReaderPreferences, ReadingLocator, ReadingProfile } from "../types/library";
 import { normalizePreferences } from "./preferences";
 
 interface FileRecord {
@@ -23,6 +23,15 @@ class WebReaderDatabase extends Dexie {
       books: "id, &fingerprint, addedAt, updatedAt, format",
       files: "bookId",
       settings: "key",
+    });
+    this.version(2).stores({
+      books: "id, &fingerprint, addedAt, updatedAt, format, readingProfile",
+      files: "bookId",
+      settings: "key",
+    }).upgrade(async (transaction) => {
+      await transaction.table<BookRecord>("books").toCollection().modify((book) => {
+        book.readingProfile = book.readingProfile === "article" ? "article" : "book";
+      });
     });
   }
 }
@@ -52,6 +61,10 @@ export async function getBookFile(bookId: string): Promise<Blob> {
 
 export async function updateLocator(bookId: string, locator: ReadingLocator): Promise<void> {
   await db.books.update(bookId, { locator, updatedAt: Date.now() });
+}
+
+export async function updateReadingProfile(bookId: string, readingProfile: ReadingProfile): Promise<void> {
+  await db.books.update(bookId, { readingProfile });
 }
 
 export async function removeBook(bookId: string): Promise<void> {

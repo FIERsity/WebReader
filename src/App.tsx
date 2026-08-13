@@ -13,9 +13,9 @@ import { resolveLanguage, translate, type Language, type TranslationKey, type Tr
 import { handleReaderShortcut } from "./lib/readerShortcuts";
 import {
   findByFingerprint, getBookFile, getPreferences, listBooks, removeBook,
-  requestPersistentStorage, saveBook, savePreferences, updateLocator,
+  requestPersistentStorage, saveBook, savePreferences, updateLocator, updateReadingProfile,
 } from "./lib/storage";
-import type { BookRecord, ReaderPreferences, ReadingLocator } from "./types/library";
+import type { BookRecord, ReaderPreferences, ReadingLocator, ReadingProfile } from "./types/library";
 import { DEFAULT_PREFERENCES } from "./types/library";
 import type { ReaderCapabilities, ReaderController, ReaderOutlineItem } from "./types/reader";
 import { NO_READER_CAPABILITIES } from "./types/reader";
@@ -120,6 +120,8 @@ export default function App() {
   const outlineButtonRef = useRef<HTMLButtonElement>(null);
   const settingsButtonRef = useRef<HTMLButtonElement>(null);
   const navigationRef = useRef<ReaderController | null>(null);
+  const profileWriteRef = useRef(Promise.resolve());
+  const readingProfileRef = useRef(new Map<string, ReadingProfile>());
   const shortcutActionsRef = useRef<{
     previous: () => void;
     next: () => void;
@@ -138,7 +140,11 @@ export default function App() {
     typography: false,
   });
 
-  const refreshBooks = useCallback(async () => setBooks(await listBooks()), []);
+  const refreshBooks = useCallback(async () => {
+    const storedBooks = await listBooks();
+    for (const book of storedBooks) readingProfileRef.current.set(book.id, book.readingProfile);
+    setBooks(storedBooks);
+  }, []);
 
   useEffect(() => {
     localStorage.setItem(LANGUAGE_KEY, language);
@@ -157,6 +163,7 @@ export default function App() {
 
   useEffect(() => {
     void Promise.all([listBooks(), getPreferences()]).then(([storedBooks, storedPreferences]) => {
+      for (const book of storedBooks) readingProfileRef.current.set(book.id, book.readingProfile);
       setBooks(storedBooks);
       setPreferences(storedPreferences);
     }).catch(() => setMessage(t("storageUnavailable")));
@@ -183,6 +190,7 @@ export default function App() {
           fingerprint,
           title: displayTitle(file.name),
           format,
+          readingProfile: "book",
           fileName: file.name,
           mediaType: file.type || (format === "txt" ? "text/plain" : `application/${format}`),
           size: file.size,
@@ -190,6 +198,7 @@ export default function App() {
           updatedAt: now,
         };
         await saveBook(book, file);
+        readingProfileRef.current.set(book.id, book.readingProfile);
         imported += 1;
       }
       await refreshBooks();
@@ -203,17 +212,21 @@ export default function App() {
   }, [refreshBooks, t]);
 
   const openBook = useCallback(async (book: BookRecord) => {
+    const currentBook = {
+      ...book,
+      readingProfile: readingProfileRef.current.get(book.id) ?? book.readingProfile,
+    };
     setMessage(undefined);
     setReaderPanel(undefined);
     setOutline([]);
     setAutomaticOutline(false);
     setCurrentTarget(undefined);
-    setReaderLabel(book.locator?.label);
+    setReaderLabel(currentBook.locator?.label);
     setCapabilities(NO_READER_CAPABILITIES);
     try {
-      const file = await getBookFile(book.id);
+      const file = await getBookFile(currentBook.id);
       setActiveFile(file);
-      setActiveBook(book);
+      setActiveBook(currentBook);
     } catch {
       setMessage(t("openFailed"));
     }
@@ -289,6 +302,17 @@ export default function App() {
     await refreshBooks();
   }, [deleteTarget, refreshBooks]);
 
+  const changeReadingProfile = useCallback((book: BookRecord, readingProfile: ReadingProfile) => {
+    readingProfileRef.current.set(book.id, readingProfile);
+    setBooks((current) => current.map((item) => item.id === book.id ? { ...item, readingProfile } : item));
+    profileWriteRef.current = profileWriteRef.current
+      .then(() => updateReadingProfile(book.id, readingProfile))
+      .catch(() => {
+        setMessage(t("storageUnavailable"));
+        return refreshBooks();
+      });
+  }, [refreshBooks, t]);
+
   const languageControl = (
     <div className="language-switch" role="group" aria-label={t("language")}>
       <button type="button" className={language === "zh" ? "active" : ""} aria-pressed={language === "zh"} onClick={() => setLanguage("zh")}>中</button>
@@ -355,6 +379,7 @@ export default function App() {
             <Suspense fallback={<div className="reader-loading">{t("preparingBook")}</div>}>
               {activeBook.format === "epub" && (
                 <EpubReader
+                  readingProfile={activeBook.readingProfile}
                   file={activeFile}
                   locator={activeBook.locator}
                   preferences={preferences}
@@ -370,6 +395,7 @@ export default function App() {
               )}
               {activeBook.format === "pdf" && (
                 <PdfReader
+                  readingProfile={activeBook.readingProfile}
                   file={activeFile}
                   locator={activeBook.locator}
                   preferences={preferences}
@@ -383,6 +409,7 @@ export default function App() {
               )}
               {activeBook.format === "txt" && (
                 <TextReader
+                  readingProfile={activeBook.readingProfile}
                   file={activeFile}
                   fileName={activeBook.fileName}
                   mediaType={activeBook.mediaType}
@@ -397,8 +424,12 @@ export default function App() {
                 />
               )}
             </Suspense>
-            <button className="page-turn page-turn-left" type="button" onClick={() => navigationRef.current?.previous()} aria-label={t("previousPage")}><ChevronLeft /></button>
-            <button className="page-turn page-turn-right" type="button" onClick={() => navigationRef.current?.next()} aria-label={t("nextPage")}><ChevronRight /></button>
+            {activeBook.readingProfile === "book" && (
+              <>
+                <button className="page-turn page-turn-left" type="button" onClick={() => navigationRef.current?.previous()} aria-label={t("previousPage")}><ChevronLeft /></button>
+                <button className="page-turn page-turn-right" type="button" onClick={() => navigationRef.current?.next()} aria-label={t("nextPage")}><ChevronRight /></button>
+              </>
+            )}
           </section>
           {readerPanel === "settings" && (
             <ReaderSettings
@@ -499,6 +530,20 @@ export default function App() {
                     </div>
                   </button>
                   <button className="card-menu" type="button" title={t("removeBook", { title: book.title })} aria-label={t("removeBook", { title: book.title })} onClick={() => setDeleteTarget(book)}><Trash2 /></button>
+                  <div className="reading-profile-switch" role="group" aria-label={t("readingType", { title: book.title })}>
+                    <button
+                      type="button"
+                      className={book.readingProfile === "book" ? "active" : ""}
+                      aria-pressed={book.readingProfile === "book"}
+                      onClick={() => changeReadingProfile(book, "book")}
+                    >{t("bookType")}</button>
+                    <button
+                      type="button"
+                      className={book.readingProfile === "article" ? "active" : ""}
+                      aria-pressed={book.readingProfile === "article"}
+                      onClick={() => changeReadingProfile(book, "article")}
+                    >{t("articleType")}</button>
+                  </div>
                 </article>
               );
             })}
