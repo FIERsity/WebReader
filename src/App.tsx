@@ -1,7 +1,7 @@
-import { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react";
+import { type ReactNode, lazy, Suspense, useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import {
   BookOpen, ChevronLeft, ChevronRight, FileText, Import, Library,
-  ListTree, MessageSquare, Plus, Settings2, Trash2, X,
+  ListTree, MessageSquare, Plus, Rows3, Settings2, Trash2, X,
 } from "lucide-react";
 import "./App.css";
 import { ReaderOutline } from "./components/ReaderOutline";
@@ -35,6 +35,79 @@ function formatLabel(format: BookRecord["format"]): string {
   return format === "txt" ? "TEXT" : format.toUpperCase();
 }
 
+function ModalFrame({ children, className = "", labelledBy, locked = false, onClose }: {
+  children: ReactNode;
+  className?: string;
+  labelledBy: string;
+  locked?: boolean;
+  onClose: () => void;
+}) {
+  const dialogRef = useRef<HTMLElement>(null);
+  const onCloseRef = useRef(onClose);
+  const lockedRef = useRef(locked);
+  onCloseRef.current = onClose;
+  lockedRef.current = locked;
+
+  useLayoutEffect(() => {
+    const previousFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    const dialog = dialogRef.current;
+    const backdrop = dialog?.parentElement;
+    const background = [...(backdrop?.parentElement?.children ?? [])]
+      .filter((element): element is HTMLElement => element instanceof HTMLElement && element !== backdrop)
+      .map((element) => ({ element, inert: element.inert, ariaHidden: element.getAttribute("aria-hidden") }));
+    for (const { element } of background) {
+      element.inert = true;
+      element.setAttribute("aria-hidden", "true");
+    }
+    const focusable = () => [...(dialog?.querySelectorAll<HTMLElement>(
+      "button:not(:disabled), textarea:not(:disabled), input:not(:disabled), select:not(:disabled), [tabindex]:not([tabindex='-1'])",
+    ) ?? [])];
+    (dialog?.querySelector<HTMLElement>("[data-autofocus]") ?? focusable()[0])?.focus();
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape" && !lockedRef.current) {
+        event.preventDefault();
+        onCloseRef.current();
+        return;
+      }
+      if (event.key !== "Tab") return;
+      const controls = focusable();
+      if (controls.length === 0) {
+        event.preventDefault();
+        return;
+      }
+      const first = controls[0]!;
+      const last = controls[controls.length - 1]!;
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
+      }
+    };
+    document.addEventListener("keydown", handleKeyDown);
+    return () => {
+      document.removeEventListener("keydown", handleKeyDown);
+      for (const { element, inert, ariaHidden } of background) {
+        element.inert = inert;
+        if (ariaHidden === null) element.removeAttribute("aria-hidden");
+        else element.setAttribute("aria-hidden", ariaHidden);
+      }
+      if (previousFocus?.isConnected) previousFocus.focus();
+    };
+  }, []);
+
+  return (
+    <div className="dialog-backdrop" role="presentation" onMouseDown={(event) => {
+      if (event.currentTarget === event.target && !locked) onClose();
+    }}>
+      <section ref={dialogRef} tabIndex={-1} className={`dialog ${className}`.trim()} role="dialog" aria-modal="true" aria-labelledby={labelledBy} aria-busy={locked || undefined}>
+        {children}
+      </section>
+    </div>
+  );
+}
+
 function FeedbackDialog({ language, onClose, onSuccess }: {
   language: Language;
   onClose: () => void;
@@ -44,14 +117,6 @@ function FeedbackDialog({ language, onClose, onSuccess }: {
   const [text, setText] = useState("");
   const [sending, setSending] = useState(false);
   const [failed, setFailed] = useState(false);
-
-  useEffect(() => {
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape" && !sending) onClose();
-    };
-    document.addEventListener("keydown", handleKeyDown);
-    return () => document.removeEventListener("keydown", handleKeyDown);
-  }, [onClose, sending]);
 
   const send = async () => {
     if (!text.trim() || sending) return;
@@ -68,8 +133,7 @@ function FeedbackDialog({ language, onClose, onSuccess }: {
   };
 
   return (
-    <div className="dialog-backdrop" role="presentation" onMouseDown={(event) => { if (event.currentTarget === event.target && !sending) onClose(); }}>
-      <section className="dialog feedback-dialog" role="dialog" aria-modal="true" aria-labelledby="feedback-title">
+    <ModalFrame className="feedback-dialog" labelledBy="feedback-title" locked={sending} onClose={onClose}>
         <div className="dialog-heading">
           <div className="dialog-icon feedback-icon"><MessageSquare /></div>
           <button className="icon-button" type="button" onClick={onClose} disabled={sending} aria-label={t("cancel")}><X /></button>
@@ -77,12 +141,13 @@ function FeedbackDialog({ language, onClose, onSuccess }: {
         <h2 id="feedback-title">{t("feedbackTitle")}</h2>
         <p>{t("feedbackHint")}</p>
         <textarea
-          autoFocus
+          data-autofocus
           rows={5}
           maxLength={MAX_FEEDBACK_LENGTH}
           value={text}
           placeholder={t("feedbackPlaceholder")}
           onChange={(event) => setText(event.target.value)}
+          onKeyDown={(event) => { if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) void send(); }}
         />
         <div className="feedback-meta">
           <span className={failed ? "feedback-error" : ""}>{failed ? t("feedbackFailure") : ""}</span>
@@ -92,8 +157,41 @@ function FeedbackDialog({ language, onClose, onSuccess }: {
           <button className="secondary-button" type="button" onClick={onClose} disabled={sending}>{t("cancel")}</button>
           <button className="primary-button" type="button" onClick={() => void send()} disabled={sending || !text.trim()}>{sending ? t("sending") : t("send")}</button>
         </div>
-      </section>
-    </div>
+    </ModalFrame>
+  );
+}
+
+function DeleteDialog({ book, t, onClose, onConfirm }: {
+  book: BookRecord;
+  t: (key: TranslationKey, variables?: TranslationVariables) => string;
+  onClose: () => void;
+  onConfirm: () => Promise<void>;
+}) {
+  const [removing, setRemoving] = useState(false);
+  const [failed, setFailed] = useState(false);
+  const confirm = async () => {
+    if (removing) return;
+    setRemoving(true);
+    setFailed(false);
+    try {
+      await onConfirm();
+    } catch {
+      setFailed(true);
+      setRemoving(false);
+    }
+  };
+
+  return (
+    <ModalFrame labelledBy="delete-title" locked={removing} onClose={onClose}>
+      <div className="dialog-icon"><Trash2 /></div>
+      <h2 id="delete-title">{t("removeTitle")}</h2>
+      <p>{t("removeDescription", { title: book.title })}</p>
+      {failed && <p className="dialog-error" role="alert">{t("removeFailed")}</p>}
+      <div className="dialog-actions">
+        <button data-autofocus className="secondary-button" type="button" onClick={onClose} disabled={removing}>{t("cancel")}</button>
+        <button className="danger-button" type="button" onClick={() => void confirm()} disabled={removing}>{removing ? t("removing") : t("remove")}</button>
+      </div>
+    </ModalFrame>
   );
 }
 
@@ -175,38 +273,47 @@ export default function App() {
     setBusy(true);
     setMessage(undefined);
     let imported = 0;
+    let skipped = 0;
+    let lastError: string | undefined;
     try {
       for (const file of files) {
-        const format = await detectBookFormat(file);
-        const fingerprint = await fingerprintFile(file);
-        const existing = await findByFingerprint(fingerprint);
-        if (existing) {
-          setMessage(t("duplicateBook", { title: existing.title }));
-          continue;
+        try {
+          const format = await detectBookFormat(file);
+          const fingerprint = await fingerprintFile(file);
+          const existing = await findByFingerprint(fingerprint);
+          if (existing) {
+            skipped += 1;
+            lastError = t("duplicateBook", { title: existing.title });
+            continue;
+          }
+          const now = Date.now();
+          const book: BookRecord = {
+            id: crypto.randomUUID(),
+            fingerprint,
+            title: displayTitle(file.name),
+            format,
+            readingProfile: "book",
+            fileName: file.name,
+            mediaType: file.type || (format === "txt" ? "text/plain" : `application/${format}`),
+            size: file.size,
+            addedAt: now,
+            updatedAt: now,
+          };
+          await saveBook(book, file);
+          readingProfileRef.current.set(book.id, book.readingProfile);
+          imported += 1;
+        } catch (error) {
+          skipped += 1;
+          lastError = error instanceof BookFormatError ? t(error.translationKey) : t("importFailed");
         }
-        const now = Date.now();
-        const book: BookRecord = {
-          id: crypto.randomUUID(),
-          fingerprint,
-          title: displayTitle(file.name),
-          format,
-          readingProfile: "book",
-          fileName: file.name,
-          mediaType: file.type || (format === "txt" ? "text/plain" : `application/${format}`),
-          size: file.size,
-          addedAt: now,
-          updatedAt: now,
-        };
-        await saveBook(book, file);
-        readingProfileRef.current.set(book.id, book.readingProfile);
-        imported += 1;
       }
-      await refreshBooks();
-      if (imported > 0) setMessage(imported === 1 ? t("importedOne") : t("importedMany", { count: imported }));
-    } catch (error) {
-      setMessage(error instanceof BookFormatError ? t(error.translationKey) : t("importFailed"));
+      if (imported > 0) await refreshBooks();
+      if (imported > 0 && skipped > 0) setMessage(t("importedWithSkipped", { imported, skipped }));
+      else if (imported > 0) setMessage(imported === 1 ? t("importedOne") : t("importedMany", { count: imported }));
+      else if (lastError) setMessage(lastError);
     } finally {
       setBusy(false);
+      setDragging(false);
       if (fileInputRef.current) fileInputRef.current.value = "";
     }
   }, [refreshBooks, t]);
@@ -305,6 +412,7 @@ export default function App() {
   const changeReadingProfile = useCallback((book: BookRecord, readingProfile: ReadingProfile) => {
     readingProfileRef.current.set(book.id, readingProfile);
     setBooks((current) => current.map((item) => item.id === book.id ? { ...item, readingProfile } : item));
+    setActiveBook((current) => current?.id === book.id ? { ...current, readingProfile } : current);
     profileWriteRef.current = profileWriteRef.current
       .then(() => updateReadingProfile(book.id, readingProfile))
       .catch(() => {
@@ -346,6 +454,24 @@ export default function App() {
             <span>{readerLabel ?? formatLabel(activeBook.format)}</span>
           </div>
           <div className="reader-controls">
+            {capabilities.readingProfile && (
+              <div className="reading-mode-switch" role="group" aria-label={t("readingMode")}>
+                <button
+                  type="button"
+                  className={activeBook.readingProfile === "book" ? "active" : ""}
+                  aria-pressed={activeBook.readingProfile === "book"}
+                  title={t("pagedMode")}
+                  onClick={() => changeReadingProfile(activeBook, "book")}
+                ><BookOpen /><span>{t("pagedMode")}</span></button>
+                <button
+                  type="button"
+                  className={activeBook.readingProfile === "article" ? "active" : ""}
+                  aria-pressed={activeBook.readingProfile === "article"}
+                  title={t("scrollMode")}
+                  onClick={() => changeReadingProfile(activeBook, "article")}
+                ><Rows3 /><span>{t("scrollMode")}</span></button>
+              </div>
+            )}
             <button
               ref={settingsButtonRef}
               className={`icon-button ${readerPanel === "settings" ? "active" : ""}`}
@@ -395,7 +521,6 @@ export default function App() {
               )}
               {activeBook.format === "pdf" && (
                 <PdfReader
-                  bookId={activeBook.id}
                   readingProfile={activeBook.readingProfile}
                   file={activeFile}
                   locator={activeBook.locator}
@@ -410,7 +535,6 @@ export default function App() {
               )}
               {activeBook.format === "txt" && (
                 <TextReader
-                  bookId={activeBook.id}
                   readingProfile={activeBook.readingProfile}
                   file={activeFile}
                   fileName={activeBook.fileName}
@@ -426,7 +550,7 @@ export default function App() {
                 />
               )}
             </Suspense>
-            {activeBook.readingProfile === "book" && (
+            {capabilities.paginated && (
               <>
                 <button className="page-turn page-turn-left" type="button" onClick={() => navigationRef.current?.previous()} aria-label={t("previousPage")}><ChevronLeft /></button>
                 <button className="page-turn page-turn-right" type="button" onClick={() => navigationRef.current?.next()} aria-label={t("nextPage")}><ChevronRight /></button>
@@ -478,6 +602,7 @@ export default function App() {
             type="file"
             accept=".epub,.pdf,.txt,.md,application/epub+zip,application/pdf,text/plain,text/markdown"
             multiple
+            disabled={busy}
             onChange={(event) => void importFiles(Array.from(event.target.files ?? []))}
           />
         </header>
@@ -490,11 +615,18 @@ export default function App() {
           </div>
         )}
 
-        <div
+        <button
           className={`drop-zone ${dragging ? "dragging" : ""}`}
+          type="button"
+          disabled={busy}
+          aria-busy={busy}
+          onClick={() => fileInputRef.current?.click()}
           onDragEnter={(event) => { event.preventDefault(); setDragging(true); }}
           onDragOver={(event) => event.preventDefault()}
-          onDragLeave={(event) => { if (event.currentTarget === event.target) setDragging(false); }}
+          onDragLeave={(event) => {
+            const nextTarget = event.relatedTarget;
+            if (!(nextTarget instanceof Node) || !event.currentTarget.contains(nextTarget)) setDragging(false);
+          }}
           onDrop={(event) => {
             event.preventDefault();
             setDragging(false);
@@ -504,14 +636,16 @@ export default function App() {
           <Import />
           <span>{t("dropBooks")}</span>
           <small>{t("maxFileSize")}</small>
-        </div>
+        </button>
 
         {books.length === 0 ? (
           <section className="empty-state">
             <div className="empty-icon"><BookOpen /></div>
             <h2>{t("shelfEmpty")}</h2>
             <p>{t("shelfEmptyText")}</p>
-            <button className="secondary-button" type="button" onClick={() => fileInputRef.current?.click()}><Plus />{t("chooseFiles")}</button>
+            <button className="secondary-button" type="button" onClick={() => fileInputRef.current?.click()} disabled={busy}>
+              <Plus />{busy ? t("importing") : t("chooseFiles")}
+            </button>
           </section>
         ) : (
           <section className="book-grid" aria-label={t("books")}>
@@ -525,27 +659,13 @@ export default function App() {
                       <span>{formatLabel(book.format)}</span>
                     </div>
                     <div className="book-info">
-                      <strong>{book.title}</strong>
+                      <strong title={book.title}>{book.title}</strong>
                       <span>{book.author ?? book.fileName}</span>
                       <div className="progress-track"><i style={{ width: `${percent}%` }} /></div>
                       <small>{book.locator ? t("percentRead", { percent }) : t("addedOn", { date: formatDate(book.addedAt, language) })} · {formatBytes(book.size)}</small>
                     </div>
                   </button>
                   <button className="card-menu" type="button" title={t("removeBook", { title: book.title })} aria-label={t("removeBook", { title: book.title })} onClick={() => setDeleteTarget(book)}><Trash2 /></button>
-                  <div className="reading-profile-switch" role="group" aria-label={t("readingType", { title: book.title })}>
-                    <button
-                      type="button"
-                      className={book.readingProfile === "book" ? "active" : ""}
-                      aria-pressed={book.readingProfile === "book"}
-                      onClick={() => changeReadingProfile(book, "book")}
-                    >{t("bookType")}</button>
-                    <button
-                      type="button"
-                      className={book.readingProfile === "article" ? "active" : ""}
-                      aria-pressed={book.readingProfile === "article"}
-                      onClick={() => changeReadingProfile(book, "article")}
-                    >{t("articleType")}</button>
-                  </div>
                 </article>
               );
             })}
@@ -554,17 +674,12 @@ export default function App() {
       </section>
 
       {deleteTarget && (
-        <div className="dialog-backdrop" role="presentation" onMouseDown={(event) => { if (event.currentTarget === event.target) setDeleteTarget(undefined); }}>
-          <section className="dialog" role="dialog" aria-modal="true" aria-labelledby="delete-title">
-            <div className="dialog-icon"><Trash2 /></div>
-            <h2 id="delete-title">{t("removeTitle")}</h2>
-            <p>{t("removeDescription", { title: deleteTarget.title })}</p>
-            <div className="dialog-actions">
-              <button className="secondary-button" type="button" onClick={() => setDeleteTarget(undefined)}>{t("cancel")}</button>
-              <button className="danger-button" type="button" onClick={() => void confirmDelete()}>{t("remove")}</button>
-            </div>
-          </section>
-        </div>
+        <DeleteDialog
+          book={deleteTarget}
+          t={t}
+          onClose={() => setDeleteTarget(undefined)}
+          onConfirm={confirmDelete}
+        />
       )}
 
       {feedbackOpen && <FeedbackDialog language={language} onClose={() => setFeedbackOpen(false)} onSuccess={() => { setFeedbackOpen(false); setMessage(t("feedbackSuccess")); }} />}

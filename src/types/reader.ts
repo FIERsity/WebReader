@@ -9,6 +9,8 @@ export interface ReaderCapabilities {
   typography: boolean;
   outline: boolean;
   publisherFont: boolean;
+  readingProfile: boolean;
+  paginated: boolean;
 }
 
 export interface ReaderController {
@@ -21,4 +23,6 @@ export const NO_READER_CAPABILITIES: ReaderCapabilities = {
   typography: false,
   outline: false,
   publisherFont: false,
+  readingProfile: false,
+  paginated: false,
 };

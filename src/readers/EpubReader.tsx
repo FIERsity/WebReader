@@ -154,7 +154,13 @@ export function EpubReader({
         await view.open(file);
         if (!active) return;
         const fixedLayout = view.book?.rendition?.layout === "pre-paginated";
-        onCapabilities({ typography: !fixedLayout, outline: Boolean(view.book?.toc?.length), publisherFont: !fixedLayout });
+        onCapabilities({
+          typography: !fixedLayout,
+          outline: Boolean(view.book?.toc?.length),
+          publisherFont: !fixedLayout,
+          readingProfile: !fixedLayout,
+          paginated: fixedLayout || readingProfile === "book",
+        });
         onOutline(normalizeOutline(view.book?.toc));
         view.addEventListener("load", handleLoad);
         view.addEventListener("relocate", handleRelocate);

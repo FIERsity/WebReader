@@ -18,8 +18,7 @@ function isEditableTarget(target: EventTarget | null): boolean {
 export function handleReaderShortcut(event: KeyboardEvent, actions: ShortcutActions): boolean {
   if (event.defaultPrevented || event.isComposing || event.ctrlKey || event.altKey || event.metaKey) return false;
   const editable = isEditableTarget(event.target);
-  const panelOrTextCommand = event.key === "Escape" || event.key.toLowerCase() === "t" || event.key === "[" || event.key === "]";
-  if (editable && !panelOrTextCommand) return false;
+  if (editable && event.key !== "Escape") return false;
 
   let action: (() => void) | undefined;
   if (event.key === "ArrowLeft" || event.key === "PageUp" || (event.key === " " && event.shiftKey)) action = actions.previous;

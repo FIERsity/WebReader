@@ -1,12 +1,13 @@
 import type { ReaderOutlineItem } from "../types/reader";
-import type { StructuredBlockKind, StructuredTextBlock, StructuredTextDocument } from "../types/translation";
+
+export type TextBlockKind = "heading" | "paragraph" | "code";
 
 export interface TextBlock {
   id: string;
   start: number;
   end: number;
   text: string;
-  kind: StructuredBlockKind;
+  kind: TextBlockKind;
   headingLevel?: number;
 }
 
@@ -29,7 +30,7 @@ export function splitTextBlocks(text: string): TextBlock[] {
     const actualEnd = start + value.length;
     const firstLine = value.split(/\r?\n|\r/, 1)[0] ?? "";
     const heading = /^(#{1,6})\s+(.+?)\s*#*\s*$/.exec(firstLine);
-    const kind: StructuredBlockKind = fence ? "code" : heading ? "heading" : "paragraph";
+    const kind: TextBlockKind = fence ? "code" : heading ? "heading" : "paragraph";
     blocks.push({
       id: `${kind}:${start}:${actualEnd}`,
       start,
@@ -62,28 +63,6 @@ export function splitTextBlocks(text: string): TextBlock[] {
   }
   pushBlock(blockEnd);
   return blocks;
-}
-
-export async function buildStructuredTextDocument(input: {
-  bookId: string;
-  text: string;
-  markdown: boolean;
-  revision: string;
-}): Promise<StructuredTextDocument> {
-  const blocks: StructuredTextBlock[] = splitTextBlocks(input.text).map((block) => ({
-    id: block.id,
-    kind: block.kind,
-    text: block.text,
-    sourceRange: { start: block.start, end: block.end },
-    headingLevel: block.headingLevel,
-  }));
-  return {
-    version: 1,
-    bookId: input.bookId,
-    format: input.markdown ? "markdown" : "txt",
-    revision: input.revision,
-    blocks,
-  };
 }
 
 export function extractMarkdownOutline(text: string): ReaderOutlineItem[] {

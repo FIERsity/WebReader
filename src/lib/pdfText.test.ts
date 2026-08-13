@@ -378,16 +378,15 @@ describe("PDF paper text analysis", () => {
     expect(shifted.blocks.find((block) => block.text === base.blocks[0]?.text)?.id).toBe(base.blocks[0]?.id);
   });
 
-  it("keeps over-fragmented pages translatable as conservative small blocks", () => {
+  it("keeps over-fragmented pages as conservative small blocks", () => {
     const items = Array.from({ length: 84 }, (_, index) => item(`Fragment ${index} with enough text.`, 60, 20 + index * 8, 240));
     const page = analyzePdfTextPage({ page: 7, width: PAGE_WIDTH, height: PAGE_HEIGHT, items });
     expect(page.quality).toBe("review");
     expect(page.issues).toContain("over-fragmented");
-    const document = buildPdfPaperDocument([page]);
-    expect(document.translatedBlockCount).toBe(page.blocks.length);
+    expect(buildPdfPaperDocument([page]).blocks).toHaveLength(page.blocks.length);
   });
 
-  it("marks bibliography entries as references and excludes them from translation", () => {
+  it("marks bibliography entries as references", () => {
     const page = analyzePdfTextPage({
       page: 8,
       width: PAGE_WIDTH,
@@ -399,7 +398,6 @@ describe("PDF paper text analysis", () => {
       ],
     });
     expect(page.blocks.slice(1).every((block) => block.kind === "reference")).toBe(true);
-    expect(buildPdfPaperDocument([page]).translatedBlockCount).toBe(1);
   });
 
   it("splits anomalously long paragraphs at line boundaries before batching", () => {

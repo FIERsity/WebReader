@@ -39,11 +39,16 @@ describe("reader shortcuts", () => {
     expect(handlers.increaseText).not.toHaveBeenCalled();
   });
 
-  it("lets Escape close a panel even when a control owns focus", () => {
+  it("does not intercept shortcuts while a control owns focus, except Escape", () => {
     const handlers = actions();
-    const event = keyboard("Escape");
-    Object.defineProperty(event, "target", { value: { closest: () => ({}) } });
-    expect(handleReaderShortcut(event, handlers)).toBe(true);
+    const textSize = keyboard("]");
+    Object.defineProperty(textSize, "target", { value: { closest: () => ({}) } });
+    expect(handleReaderShortcut(textSize, handlers)).toBe(false);
+    expect(handlers.increaseText).not.toHaveBeenCalled();
+
+    const escape = keyboard("Escape");
+    Object.defineProperty(escape, "target", { value: { closest: () => ({}) } });
+    expect(handleReaderShortcut(escape, handlers)).toBe(true);
     expect(handlers.closePanel).toHaveBeenCalledOnce();
   });
 

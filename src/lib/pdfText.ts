@@ -80,7 +80,6 @@ export interface PdfPaperDocument {
   algorithmVersion: number;
   pages: PdfAnalyzedPage[];
   blocks: PdfPaperBlock[];
-  translatedBlockCount: number;
   rejectedPages: number[];
   reviewPages: number[];
   characterCount: number;
@@ -587,7 +586,6 @@ export function buildPdfPaperDocument(pages: PdfAnalyzedPage[]): PdfPaperDocumen
     algorithmVersion: PDF_TEXT_ALGORITHM_VERSION,
     pages: orderedPages,
     blocks,
-    translatedBlockCount: blocks.filter((block) => block.kind !== "equation" && block.kind !== "reference").length,
     rejectedPages: orderedPages.filter((page) => page.quality === "rejected").map((page) => page.page),
     reviewPages: orderedPages.filter((page) => page.quality === "review").map((page) => page.page),
     characterCount: blocks.reduce((total, block) => total + block.text.length, 0),

@@ -1,12 +1,10 @@
 import { defineConfig } from "vitest/config";
 import react from "@vitejs/plugin-react";
 import { VitePWA } from "vite-plugin-pwa";
-import { deepSeekProxyPlugin } from "./dev/deepseekProxy.js";
 
 export default defineConfig({
   base: "./",
   plugins: [
-    deepSeekProxyPlugin(),
     react(),
     VitePWA({
       registerType: "prompt",

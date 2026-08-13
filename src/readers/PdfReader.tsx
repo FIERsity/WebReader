@@ -1,9 +1,8 @@
-import { Columns2, FileText, Languages, LoaderCircle, Pause, Rows3 } from "lucide-react";
+import { Columns2, FileText, LoaderCircle, Rows3 } from "lucide-react";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import {
   GlobalWorkerOptions, getDocument, TextLayer, type PDFDocumentProxy, type PDFPageProxy,
 } from "pdfjs-dist";
-import { PdfTranslationDialog } from "../components/PdfTranslationDialog";
 import type { TranslationKey, TranslationVariables } from "../lib/i18n";
 import { parsePdfLocation, serializePdfLocation } from "../lib/pdfLocation";
 import {
@@ -16,26 +15,12 @@ import {
   type PdfPaperBlock, type PdfPaperDocument, type PdfRawTextItem,
 } from "../lib/pdfText";
 import { WheelGesture, normalizedWheelDelta, shouldIgnoreWheel } from "../lib/wheelPager";
-import { hashText } from "../lib/translation";
-import {
-  createPaperBatches, paperManifestHash, translatePaperBatchRecovering, type PaperTranslationError,
-} from "../lib/paperTranslation";
-import {
-  completePaperTranslationBatch, createPaperTranslationJob, listPaperTranslationBatches,
-  listPaperTranslationJobs, listPaperTranslationResults, pausePaperTranslationJob,
-  resumePaperTranslationJob, updatePaperTranslationBatch, updatePaperTranslationJob,
-} from "../lib/storage";
 import type { ReaderPreferences, ReadingLocator, ReadingProfile } from "../types/library";
-import type {
-  PaperTranslationBatch, PaperTranslationJob, PaperTranslationProviderConfig, PaperTranslationResult,
-  PaperTranslationUnit, TranslationTargetLanguage,
-} from "../types/translation";
 import type { ReaderCapabilities, ReaderController, ReaderOutlineItem } from "../types/reader";
 import pdfWorkerUrl from "pdfjs-dist/build/pdf.worker.min.mjs?url";
 
 GlobalWorkerOptions.workerSrc = pdfWorkerUrl;
 
-const PAPER_TRANSLATION_ENABLED = false;
 const pageRenderLeases = new WeakMap<PDFPageProxy, number>();
 
 function acquirePageLease(page: PDFPageProxy): () => void {
@@ -53,7 +38,6 @@ function acquirePageLease(page: PDFPageProxy): () => void {
 }
 
 interface PdfReaderProps {
-  bookId: string;
   readingProfile: ReadingProfile;
   file: Blob;
   locator?: ReadingLocator;
@@ -64,12 +48,6 @@ interface PdfReaderProps {
   onCurrentTarget: (target?: string) => void;
   navigationRef: React.RefObject<ReaderController | null>;
   t: (key: TranslationKey, variables?: TranslationVariables) => string;
-}
-
-function paperErrorCode(reason: unknown): PaperTranslationError["code"] {
-  const code = (reason as { code?: unknown })?.code;
-  return code === "auth" || code === "rate-limit" || code === "cors" || code === "timeout" || code === "transient"
-    || code === "invalid-output" || code === "provider" || code === "cancelled" ? code : "provider";
 }
 
 interface PdfAnalysisState {
@@ -329,7 +307,7 @@ function PdfPageSlot({
 }
 
 export function PdfReader({
-  bookId, readingProfile, file, locator, preferences, onProgress, onOutline, onCapabilities,
+  readingProfile, file, locator, preferences, onProgress, onOutline, onCapabilities,
   onCurrentTarget, navigationRef, t,
 }: PdfReaderProps) {
   const stageRef = useRef<HTMLDivElement>(null);
@@ -341,19 +319,10 @@ export function PdfReader({
   const restoringRef = useRef(readingProfile === "article");
   const pendingPaperPageRef = useRef<number | undefined>(undefined);
   const analysisAbortRef = useRef<AbortController | undefined>(undefined);
-  const translationAbortRef = useRef<AbortController | undefined>(undefined);
-  const providerConfigRef = useRef<PaperTranslationProviderConfig | undefined>(undefined);
-  const translationRunRef = useRef<string | undefined>(undefined);
-  const translationRequestedRef = useRef(false);
   const pendingPaperModeRef = useRef<"article" | "proof" | undefined>(undefined);
   const [viewMode, setViewMode] = useState<"pdf" | "paper">("pdf");
-  const [paperDisplayMode, setPaperDisplayMode] = useState<"article" | "proof" | "paired" | "translation">("article");
+  const [paperDisplayMode, setPaperDisplayMode] = useState<"article" | "proof">("article");
   const [activeBlockId, setActiveBlockId] = useState<string>();
-  const [documentRevision, setDocumentRevision] = useState<string>();
-  const [translationDialogOpen, setTranslationDialogOpen] = useState(false);
-  const [translationJob, setTranslationJob] = useState<PaperTranslationJob>();
-  const [translationResults, setTranslationResults] = useState<Map<string, PaperTranslationResult>>(new Map());
-  const [translationError, setTranslationError] = useState<string>();
   const [analysis, setAnalysis] = useState<PdfAnalysisState>({ status: "idle", completedPages: 0, totalPages: 0 });
   const [stageElement, setStageElement] = useState<HTMLDivElement | null>(null);
   const [stageWidth, setStageWidth] = useState(0);
@@ -406,12 +375,8 @@ export function PdfReader({
   useEffect(() => {
     let active = true;
     let task: ReturnType<typeof getDocument> | undefined;
-    void file.arrayBuffer().then(async (data) => {
+    void file.arrayBuffer().then((data) => {
       if (!active) return;
-      const digest = await crypto.subtle.digest("SHA-256", data.slice(0));
-      if (!active) return;
-      const revisionHash = Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("");
-      setDocumentRevision(`sha256:${revisionHash}:pdf-text-v2`);
       task = getDocument({
         data,
         useWorkerFetch: false,
@@ -434,7 +399,7 @@ export function PdfReader({
       }
       if (!active) return;
       onOutline(outline);
-      onCapabilities({ typography: false, outline: outline.length > 0, publisherFont: false });
+      onCapabilities({ typography: false, outline: outline.length > 0, publisherFont: false, readingProfile: true, paginated: !continuous });
       if (continuous) {
         const ratios = Array.from({ length: pdf.numPages }, () => 1 / 1.414);
         for (let start = 1; start <= pdf.numPages; start += 16) {
@@ -463,7 +428,7 @@ export function PdfReader({
       setPdfDocument(undefined);
       setPageAspectRatios([]);
       onOutline([]);
-      onCapabilities({ typography: false, outline: false, publisherFont: false });
+      onCapabilities({ typography: false, outline: false, publisherFont: false, readingProfile: false, paginated: false });
       void task?.destroy();
     };
   }, [continuous, file, onCapabilities, onOutline]);
@@ -657,218 +622,6 @@ export function PdfReader({
 
   useEffect(() => () => {
     analysisAbortRef.current?.abort();
-    translationAbortRef.current?.abort();
-    providerConfigRef.current = undefined;
-  }, []);
-
-  const paperUnits = useMemo(() => {
-    const units: PaperTranslationUnit[] = [];
-    let section: string | undefined;
-    for (const block of analysis.document?.blocks ?? []) {
-      if (block.kind === "title" || block.kind === "heading") section = block.text;
-      if (block.kind === "equation" || block.kind === "reference" || !block.text.trim()) continue;
-      units.push({ id: block.id, text: block.text, kind: block.kind, section });
-    }
-    return units;
-  }, [analysis.document]);
-
-  useEffect(() => {
-    if (!documentRevision || analysis.status !== "ready" || paperUnits.length === 0) return;
-    let active = true;
-    void paperManifestHash(paperUnits).then(async (manifestHash) => {
-      const jobs = await listPaperTranslationJobs(bookId, documentRevision);
-      if (!active) return;
-      const latest = jobs.filter((job) => job.manifestHash === manifestHash).sort((a, b) => b.updatedAt - a.updatedAt)[0];
-      if (!latest) {
-        if (translationRequestedRef.current) {
-          translationRequestedRef.current = false;
-          setTranslationDialogOpen(true);
-        }
-        return;
-      }
-      if (translationRequestedRef.current) {
-        translationRequestedRef.current = false;
-        if (latest.completedUnits < latest.totalUnits) setTranslationDialogOpen(true);
-        else {
-          setViewMode("paper");
-          setPaperDisplayMode("paired");
-        }
-      }
-      setTranslationJob(latest.status === "running" ? { ...latest, status: "paused-needs-key" } : latest);
-      if (latest.status === "running") await updatePaperTranslationJob(latest.id, { status: "paused-needs-key" });
-      const results = await listPaperTranslationResults(latest.id);
-      if (active) setTranslationResults(new Map(results.map((result) => [result.blockId, result])));
-    }).catch(() => { if (active) setTranslationError(t("paperTranslationStorageFailed")); });
-    return () => { active = false; };
-  }, [analysis.status, bookId, documentRevision, paperUnits, t]);
-
-  useEffect(() => {
-    if (analysis.status !== "failed" || !translationRequestedRef.current) return;
-    translationRequestedRef.current = false;
-    setTranslationError(t("pdfAnalysisFailed"));
-  }, [analysis.status, t]);
-
-  const runPaperTranslation = useCallback(async (
-    config: PaperTranslationProviderConfig,
-    targetLanguage: TranslationTargetLanguage,
-  ) => {
-    const paper = analysis.document;
-    if (!paper || !documentRevision || paperUnits.length === 0) return;
-    providerConfigRef.current = config;
-    translationAbortRef.current?.abort();
-    const controller = new AbortController();
-    const runId = crypto.randomUUID();
-    translationAbortRef.current = controller;
-    translationRunRef.current = runId;
-    setTranslationError(undefined);
-    setTranslationDialogOpen(false);
-    setViewMode("paper");
-    setPaperDisplayMode("paired");
-    let activeJobId: string | undefined;
-    let activeBatch: PaperTranslationBatch | undefined;
-    try {
-      const assertCurrentRun = () => {
-        if (controller.signal.aborted || translationRunRef.current !== runId) throw new DOMException("Superseded", "AbortError");
-      };
-      const manifestHash = await paperManifestHash(paperUnits);
-      assertCurrentRun();
-      const storedJobs = await listPaperTranslationJobs(bookId, documentRevision);
-      assertCurrentRun();
-      let job = storedJobs.find((candidate) => candidate.manifestHash === manifestHash
-        && candidate.provider === config.provider && candidate.model === config.model
-        && candidate.endpoint === config.endpoint && candidate.targetLanguage === targetLanguage
-        && candidate.status !== "cancelled");
-      let batches: PaperTranslationBatch[];
-      if (!job) {
-        const definitions = createPaperBatches(paperUnits);
-        const now = Date.now();
-        job = {
-          id: crypto.randomUUID(), bookId, documentRevision, segmenterVersion: paper.algorithmVersion,
-          promptVersion: "paper-v1", manifestHash,
-          provider: config.provider, model: config.model, endpoint: config.endpoint,
-          targetLanguage, status: "queued", totalUnits: paperUnits.length, completedUnits: 0,
-          batchCount: definitions.length, completedBatches: 0, createdAt: now, updatedAt: now,
-        };
-        batches = definitions.map((batch) => ({
-          id: crypto.randomUUID(), jobId: job!.id, bookId, ordinal: batch.ordinal,
-          unitIds: batch.units.map((unit) => unit.id), status: "queued", attempt: 0, updatedAt: now,
-        }));
-        if (!await createPaperTranslationJob(job, batches)) throw new Error("Source book was removed.");
-        assertCurrentRun();
-      } else {
-        batches = (await listPaperTranslationBatches(job.id)).map((batch) => batch.status === "running" ? { ...batch, status: "queued" } : batch);
-        assertCurrentRun();
-      }
-      const storedResults = await listPaperTranslationResults(job.id);
-      assertCurrentRun();
-      activeJobId = job.id;
-      const results = new Map(storedResults.map((result) => [result.blockId, result]));
-      setTranslationResults(new Map(results));
-      job = { ...job, status: "running", lastErrorCode: undefined, updatedAt: Date.now() };
-      if (!await resumePaperTranslationJob(job.id)) throw new Error("Translation job was removed.");
-      assertCurrentRun();
-      setTranslationJob(job);
-      const unitsById = new Map(paperUnits.map((unit) => [unit.id, unit]));
-      let completedBatches = batches.filter((batch) => batch.status === "completed").length;
-      let completedUnits = results.size;
-      for (const batch of batches.sort((a, b) => a.ordinal - b.ordinal)) {
-        if (controller.signal.aborted) throw new DOMException("Cancelled", "AbortError");
-        const missingUnits = batch.unitIds
-          .map((id) => unitsById.get(id))
-          .filter((unit): unit is PaperTranslationUnit => unit !== undefined)
-          .filter((unit) => !results.has(unit.id));
-        if (missingUnits.length === 0) continue;
-        activeBatch = batch;
-        await updatePaperTranslationBatch(job.id, batch.id, { status: "running", attempt: batch.attempt + 1, errorCode: undefined });
-        assertCurrentRun();
-        const preceding = [...results.values()].slice(-3).map((result) => result.translatedText).join("\n");
-        const section = missingUnits[0]?.section ?? "";
-        let translated: Map<string, string> | undefined;
-        for (let attempt = 0; attempt < 3; attempt += 1) {
-          try {
-            translated = await translatePaperBatchRecovering({
-              config, targetLanguage, units: missingUnits,
-              context: [section && `Current section: ${section}`, preceding && `Previous translated context:\n${preceding}`].filter(Boolean).join("\n\n"),
-              signal: controller.signal,
-            });
-            break;
-          } catch (reason) {
-            const code = paperErrorCode(reason);
-            if (attempt >= 2 || code !== "rate-limit" && code !== "timeout" && code !== "transient") throw reason;
-            const requestedDelay = (reason as PaperTranslationError).retryAfterMs ?? 1_000 * 2 ** attempt;
-            const delay = Math.min(30_000, Math.max(500, requestedDelay));
-            await new Promise<void>((resolve, reject) => {
-              const timer = window.setTimeout(resolve, delay);
-              controller.signal.addEventListener("abort", () => {
-                window.clearTimeout(timer);
-                reject(new DOMException("Cancelled", "AbortError"));
-              }, { once: true });
-            });
-          }
-        }
-        if (!translated) throw new Error("Translation batch did not complete.");
-        assertCurrentRun();
-        const now = Date.now();
-        const records = await Promise.all(missingUnits.map(async (unit) => ({
-          key: `${job!.id}:${unit.id}`, jobId: job!.id, bookId, blockId: unit.id,
-          sourceHash: await hashText(unit.text), translatedText: translated.get(unit.id)!, createdAt: now, updatedAt: now,
-        })));
-        assertCurrentRun();
-        for (const record of records) results.set(record.blockId, record);
-        completedBatches += 1;
-        completedUnits = results.size;
-        if (!await completePaperTranslationBatch({
-          jobId: job.id, batchId: batch.id, results: records, completedUnits, completedBatches,
-        })) throw new Error("Translation job was removed.");
-        assertCurrentRun();
-        job = { ...job, completedUnits, completedBatches, updatedAt: now };
-        activeBatch = undefined;
-        setTranslationJob(job);
-        setTranslationResults(new Map(results));
-      }
-      job = { ...job, status: "completed", completedUnits, completedBatches, updatedAt: Date.now() };
-      await updatePaperTranslationJob(job.id, { status: "completed", completedUnits, completedBatches, lastErrorCode: undefined });
-      assertCurrentRun();
-      setTranslationJob(job);
-    } catch (reason) {
-      if (translationRunRef.current !== runId) return;
-      const providerReason = reason as PaperTranslationError;
-      const cancelled = providerReason.code === "cancelled" || (reason as { name?: string })?.name === "AbortError";
-      const status = cancelled ? "paused-needs-key" : "failed";
-      const code = paperErrorCode(providerReason);
-      setTranslationJob((current) => current ? { ...current, status, lastErrorCode: code } : current);
-      if (activeJobId) {
-        await pausePaperTranslationJob({
-          jobId: activeJobId,
-          status,
-          errorCode: code,
-          activeBatchId: activeBatch?.id,
-          batchStatus: activeBatch ? cancelled ? "queued" : "failed" : undefined,
-          batchAttempt: activeBatch ? activeBatch.attempt + 1 : undefined,
-        });
-      }
-      if (!cancelled) setTranslationError(t(`paperTranslationError_${code}` as TranslationKey));
-    } finally {
-      if (translationRunRef.current === runId) {
-        translationAbortRef.current = undefined;
-        translationRunRef.current = undefined;
-        providerConfigRef.current = undefined;
-      }
-    }
-  }, [analysis.document, bookId, documentRevision, paperUnits, t]);
-
-  const requestPaperTranslation = useCallback(() => {
-    if (analysis.status !== "ready") {
-      translationRequestedRef.current = true;
-      void startAnalysis();
-      return;
-    }
-    setTranslationDialogOpen(true);
-  }, [analysis.status, startAnalysis]);
-
-  const pausePaperTranslation = useCallback(() => {
-    translationAbortRef.current?.abort();
-    providerConfigRef.current = undefined;
   }, []);
 
   useEffect(() => {
@@ -1012,32 +765,11 @@ export function PdfReader({
           <button type="button" className={showingPaper && paperDisplayMode === "proof" ? "active" : ""} aria-pressed={showingPaper && paperDisplayMode === "proof"} onClick={() => openPaperMode("proof")}>
             {analysis.status === "running" && pendingPaperModeRef.current === "proof" ? <LoaderCircle className="spin" /> : <Columns2 />}{t("proofreadLayout")}
           </button>
-          {PAPER_TRANSLATION_ENABLED && analysis.status === "ready" && translationJob && (
-            <>
-              <button type="button" className={showingPaper && paperDisplayMode === "paired" ? "active" : ""} aria-pressed={showingPaper && paperDisplayMode === "paired"} onClick={() => { setPaperDisplayMode("paired"); changeView("paper"); }}>
-                <Rows3 />{t("pairedTranslation")}
-              </button>
-              <button type="button" className={showingPaper && paperDisplayMode === "translation" ? "active" : ""} aria-pressed={showingPaper && paperDisplayMode === "translation"} onClick={() => { setPaperDisplayMode("translation"); changeView("paper"); }}>
-                <Languages />{t("translationOnly")}
-              </button>
-            </>
-          )}
         </div>
-        {PAPER_TRANSLATION_ENABLED && (
-          <button className="pdf-translate-command" type="button" onClick={requestPaperTranslation} disabled={analysis.status === "running" || translationJob?.status === "running"}>
-            {analysis.status === "running" || translationJob?.status === "running" ? <LoaderCircle className="spin" /> : <Languages />}
-            {translationJob && translationJob.completedUnits < translationJob.totalUnits ? t("resumeTranslation") : t("translatePaper")}
-          </button>
-        )}
-        {PAPER_TRANSLATION_ENABLED && translationJob?.status === "running" && (
-          <button className="pdf-pause-command" type="button" onClick={pausePaperTranslation}><Pause />{t("pauseTranslation")}</button>
-        )}
         {analysis.status === "running" && <span>{t("pdfAnalysisProgress", { current: analysis.completedPages, total: analysis.totalPages })}</span>}
-        {PAPER_TRANSLATION_ENABLED && translationJob && <span>{t("paperTranslationProgress", { current: translationJob.completedUnits, total: translationJob.totalUnits })}</span>}
         {analysis.status === "failed" && <span className="pdf-analysis-error">{t("pdfAnalysisFailed")}</span>}
-        {PAPER_TRANSLATION_ENABLED && translationError && <span className="pdf-analysis-error">{translationError}</span>}
       </div>
-      {showingPaper && analysis.document && (paperDisplayMode === "article" || paperDisplayMode === "proof") ? (
+      {showingPaper && analysis.document ? (
         <article className={`pdf-paper-document mode-${paperDisplayMode}`}>
           <div className="pdf-paper-summary" aria-label={t("reflowSummary")}>
             <div><strong>{analysis.document.pages.length}</strong><span>{t("pdfPages")}</span></div>
@@ -1079,63 +811,6 @@ export function PdfReader({
             })}
           </div>
         </article>
-      ) : PAPER_TRANSLATION_ENABLED && showingPaper && analysis.document && translationJob ? (
-        <article className={`pdf-paper-document mode-${paperDisplayMode}`}>
-          <div className="pdf-paper-columns" aria-label={paperDisplayMode === "paired" ? t("pairedTranslation") : t("translationOnly")}>
-            {paperDisplayMode === "paired" && <div className="pdf-paper-column-header">{t("sourceText")}</div>}
-            <div className="pdf-paper-column-header">{t("translatedText")}</div>
-            {analysis.document.pages.map((page) => {
-              const blocks = analysis.document!.blocks.filter((block) => block.fragments[0]?.page === page.page);
-              return (
-                <section className="pdf-paper-page-content" key={page.page}>
-                  <div className="pdf-paper-page-marker" data-paper-page={page.page}>
-                    <span>{t("page", { page: page.page })}</span>
-                  </div>
-                  {paperDisplayMode === "paired" && pdfDocument && (
-                    <div className="pdf-paper-visual-row">
-                      <div>
-                        <PdfPagePreview
-                          pdf={pdfDocument}
-                          pageNumber={page.page}
-                          label={t("pdfPageVisual", { page: page.page })}
-                          onError={handleRenderError}
-                        />
-                      </div>
-                      <p>{t("pdfVisualReference")}</p>
-                    </div>
-                  )}
-                  {blocks.length === 0 ? (
-                    <p className="pdf-paper-empty-page">{t(page.quality === "rejected" ? "pdfVisualFallback" : "pdfPageEmpty")}</p>
-                  ) : blocks.map((block) => {
-                    const result = translationResults.get(block.id);
-                    const preserved = block.kind === "equation" || block.kind === "reference";
-                    return (
-                      <div
-                        className={`pdf-paper-row ${activeBlockId === block.id ? "active" : ""}`}
-                        data-block-id={block.id}
-                        key={`${page.page}-${block.id}`}
-                        onClick={() => selectBlock(block)}
-                        onPointerUp={() => handlePaperSelection(block)}
-                      >
-                        {paperDisplayMode === "paired" && (
-                          <div className={`pdf-paper-source pdf-block-${block.kind}`}>
-                            <span className="pdf-block-kind">{t(`pdfBlock_${block.kind}` as TranslationKey)}</span>
-                            <span>{block.text}</span>
-                          </div>
-                        )}
-                        <div className="pdf-paper-translation">
-                          {result ? <p>{result.translatedText}</p> : preserved ? <p className="pdf-preserved-text">{block.text}</p> : (
-                            <span>{translationJob.status === "running" ? t("translationPending") : t("translationNotCompleted")}</span>
-                          )}
-                        </div>
-                      </div>
-                    );
-                  })}
-                </section>
-              );
-            })}
-          </div>
-        </article>
       ) : continuousCanvas && pdfDocument ? (
         <div className="continuous-pdf-track" style={{ height: pageLayout.totalHeight }}>
           {visiblePages.map((page) => (
@@ -1161,15 +836,6 @@ export function PdfReader({
           activeFragments={analysis.document?.blocks.find((block) => block.id === activeBlockId)?.fragments}
           onTextSelection={selectSourceItems}
           onError={handleRenderError}
-        />
-      )}
-      {PAPER_TRANSLATION_ENABLED && translationDialogOpen && analysis.document && (
-        <PdfTranslationDialog
-          blockCount={paperUnits.length}
-          characterCount={paperUnits.reduce((total, unit) => total + unit.text.length, 0)}
-          t={t}
-          onClose={() => setTranslationDialogOpen(false)}
-          onConfirm={(config, targetLanguage) => void runPaperTranslation(config, targetLanguage)}
         />
       )}
       {!showingPaper && <div className="page-status" aria-live="polite">{pageNumber} / {pageCount || "..."}</div>}
