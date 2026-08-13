@@ -109,6 +109,7 @@ export async function callDeepSeek(
         model: TRANSLATION_MODEL,
         response_format: { type: "json_object" },
         temperature: 0.1,
+        thinking: { type: "disabled" },
         max_tokens: 4096,
         stream: false,
         messages: [

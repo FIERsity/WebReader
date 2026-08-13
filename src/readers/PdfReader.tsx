@@ -18,7 +18,7 @@ import {
 import { WheelGesture, normalizedWheelDelta, shouldIgnoreWheel } from "../lib/wheelPager";
 import { hashText } from "../lib/translation";
 import {
-  createPaperBatches, paperManifestHash, translatePaperBatch, type PaperTranslationError,
+  createPaperBatches, paperManifestHash, translatePaperBatchRecovering, type PaperTranslationError,
 } from "../lib/paperTranslation";
 import {
   completePaperTranslationBatch, createPaperTranslationJob, listPaperTranslationBatches,
@@ -784,7 +784,7 @@ export function PdfReader({
         let translated: Map<string, string> | undefined;
         for (let attempt = 0; attempt < 3; attempt += 1) {
           try {
-            translated = await translatePaperBatch({
+            translated = await translatePaperBatchRecovering({
               config, targetLanguage, units: missingUnits,
               context: [section && `Current section: ${section}`, preceding && `Previous translated context:\n${preceding}`].filter(Boolean).join("\n\n"),
               signal: controller.signal,

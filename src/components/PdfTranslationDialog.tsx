@@ -1,13 +1,16 @@
 import { KeyRound, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
-import { providerDefaultEndpoint, validatePaperProviderConfig } from "../lib/paperTranslation";
+import {
+  DEEPSEEK_PAPER_MODELS, DEFAULT_DEEPSEEK_PAPER_MODEL,
+  providerDefaultEndpoint, validatePaperProviderConfig,
+} from "../lib/paperTranslation";
 import type { TranslationKey, TranslationVariables } from "../lib/i18n";
 import type { PaperTranslationProviderConfig, PaperTranslationProviderId, TranslationTargetLanguage } from "../types/translation";
 
 const PROVIDER_MODELS: Record<PaperTranslationProviderId, string> = {
   openai: "gpt-4.1-mini",
-  anthropic: "claude-sonnet-4-5",
-  deepseek: "deepseek-chat",
+  anthropic: "claude-sonnet-5",
+  deepseek: DEFAULT_DEEPSEEK_PAPER_MODEL,
   "custom-openai": "",
 };
 
@@ -85,7 +88,12 @@ export function PdfTranslationDialog({ blockCount, characterCount, t, onClose, o
         )}
         <label>
           <span>{t("model")}</span>
-          <input type="text" value={model} onChange={(event) => setModel(event.target.value)} />
+          {provider === "deepseek" ? (
+            <select value={model} onChange={(event) => setModel(event.target.value)}>
+              <option value={DEEPSEEK_PAPER_MODELS[0]}>{t("deepseekV4Pro")}</option>
+              <option value={DEEPSEEK_PAPER_MODELS[1]}>{t("deepseekV4Flash")}</option>
+            </select>
+          ) : <input type="text" value={model} onChange={(event) => setModel(event.target.value)} />}
         </label>
         <label>
           <span>{t("apiKey")}</span>

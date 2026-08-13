@@ -5,8 +5,9 @@ import type {
 import { hashText } from "./translation";
 
 export const PAPER_TRANSLATION_PROMPT_VERSION = "paper-v1";
-export const MAX_PAPER_BATCH_CHARACTERS = 8_000;
-export const MAX_PAPER_BATCH_UNITS = 16;
+export const MAX_PAPER_BATCH_CHARACTERS = 6_000;
+export const MAX_PAPER_BATCH_UNITS = 12;
+const MAX_PROVIDER_OUTPUT_TOKENS = 8_192;
 
 export interface PaperTranslationBatchInput {
   id: string;
@@ -51,6 +52,13 @@ function providerError(code: PaperTranslationError["code"], message: string, ret
   return error;
 }
 
+export const DEEPSEEK_PAPER_MODELS = ["deepseek-v4-pro", "deepseek-v4-flash"] as const;
+export const DEFAULT_DEEPSEEK_PAPER_MODEL = DEEPSEEK_PAPER_MODELS[0];
+
+export function isRetiredPaperModel(provider: PaperTranslationProviderId, model: string): boolean {
+  return provider === "deepseek" && (model === "deepseek-chat" || model === "deepseek-reasoner");
+}
+
 export function providerDefaultEndpoint(provider: PaperTranslationProviderId): string {
   if (provider === "openai") return "https://api.openai.com/v1/responses";
   if (provider === "anthropic") return "https://api.anthropic.com/v1/messages";
@@ -61,6 +69,9 @@ export function providerDefaultEndpoint(provider: PaperTranslationProviderId): s
 export function validatePaperProviderConfig(config: PaperTranslationProviderConfig): URL {
   if (!config.apiKey.trim()) throw providerError("auth", "API key is required.");
   if (!config.model.trim()) throw providerError("provider", "Model is required.");
+  if (isRetiredPaperModel(config.provider, config.model.trim())) {
+    throw providerError("provider", "This DeepSeek model has retired. Choose deepseek-v4-pro or deepseek-v4-flash.");
+  }
   const endpoint = config.endpoint?.trim() || providerDefaultEndpoint(config.provider);
   let url: URL;
   try {
@@ -82,7 +93,9 @@ function protectUnit(unit: PaperTranslationUnit): ProtectedUnit {
   const placeholders = new Map<string, string>();
   let index = 0;
   const text = unit.text.replace(PROTECTED_PATTERN, (value) => {
-    const placeholder = `⟦WR_${unit.id.replace(/[^A-Za-z0-9]/gu, "").slice(-10)}_${index}⟧`;
+    const identity = unit.id.replace(/[^A-Za-z0-9]/gu, "").slice(-10) || "unit";
+    let placeholder = `__WRP_${identity}_${index}__`;
+    while (unit.text.includes(placeholder)) placeholder = `_${placeholder}_`;
     index += 1;
     placeholders.set(placeholder, value);
     return placeholder;
@@ -92,11 +105,13 @@ function protectUnit(unit: PaperTranslationUnit): ProtectedUnit {
 
 function restoreUnit(unit: ProtectedUnit, translatedText: string): string {
   let restored = translatedText.trim();
-  for (const [placeholder, source] of unit.placeholders) {
-    const occurrences = restored.split(placeholder).length - 1;
-    if (occurrences !== 1) throw providerError("invalid-output", `Protected content was changed for ${unit.id}.`);
-    restored = restored.replace(placeholder, source);
+  const expectedTokens = [...unit.placeholders.keys()].sort();
+  const returnedTokens = restored.match(/_+WRP_[A-Za-z0-9]+_[0-9]+_+/gu)?.sort() ?? [];
+  if (returnedTokens.length !== expectedTokens.length
+    || returnedTokens.some((token, index) => token !== expectedTokens[index])) {
+    throw providerError("invalid-output", `Protected content was changed for ${unit.id}.`);
   }
+  for (const [placeholder, source] of unit.placeholders) restored = restored.replace(placeholder, source);
   return restored;
 }
 
@@ -131,7 +146,7 @@ function systemPrompt(targetLanguage: TranslationTargetLanguage): string {
     `Translate an academic paper into ${target}.`,
     "Use precise terminology suitable for the paper's field and keep terminology consistent across units.",
     "Return every input id exactly once. Never merge, omit, split, or reorder units.",
-    "Preserve every token shaped like ⟦WR_...⟧ exactly and once.",
+    "Preserve every ASCII token shaped like __WRP_...__ character-for-character, exactly once.",
     "Do not translate equations, URLs, DOI strings, citation labels, variable names, or bibliography entries.",
     "Return JSON only: {\"units\":[{\"id\":\"...\",\"text\":\"...\"}]}",
   ].join(" ");
@@ -141,9 +156,34 @@ function batchPayload(units: ProtectedUnit[], context: string): string {
   return JSON.stringify({ context, units: units.map(({ id, text, kind, section }) => ({ id, text, kind, section })) });
 }
 
-function parseJsonObject(value: string): unknown {
+function parseJsonObjects(value: string): unknown[] {
   const trimmed = value.trim().replace(/^```(?:json)?\s*/iu, "").replace(/\s*```$/u, "");
-  try { return JSON.parse(trimmed); } catch { throw providerError("invalid-output", "The provider did not return valid JSON."); }
+  try { return [JSON.parse(trimmed)]; } catch {
+    const starts: number[] = [];
+    const candidates: unknown[] = [];
+    let quoted = false;
+    let escaped = false;
+    for (let index = 0; index < trimmed.length; index += 1) {
+      const character = trimmed[index];
+      if (quoted) {
+        if (escaped) escaped = false;
+        else if (character === "\\") escaped = true;
+        else if (character === "\"") quoted = false;
+        continue;
+      }
+      if (character === "\"") {
+        quoted = true;
+        continue;
+      }
+      if (character === "{") starts.push(index);
+      else if (character === "}" && starts.length > 0) {
+        const start = starts.pop()!;
+        try { candidates.push(JSON.parse(trimmed.slice(start, index + 1))); } catch { /* scan the remaining candidates */ }
+      }
+    }
+    if (candidates.length > 0) return candidates;
+    throw providerError("invalid-output", "The provider did not return valid JSON.");
+  }
 }
 
 function validateUnits(value: unknown, expected: ProtectedUnit[]): Map<string, string> {
@@ -161,6 +201,17 @@ function validateUnits(value: unknown, expected: ProtectedUnit[]): Map<string, s
   }
   if (output.size !== expected.length) throw providerError("invalid-output", "The provider omitted translation units.");
   return output;
+}
+
+function validateResponse(candidates: unknown[], expected: ProtectedUnit[]): Map<string, string> {
+  let lastError: unknown;
+  for (const candidate of candidates) {
+    try { return validateUnits(candidate, expected); } catch (reason) {
+      if (!isPaperTranslationError(reason) || reason.code !== "invalid-output") throw reason;
+      lastError = reason;
+    }
+  }
+  throw lastError ?? providerError("invalid-output", "The provider response has no valid translation object.");
 }
 
 function classifyHttpError(response: Response): PaperTranslationError {
@@ -200,15 +251,19 @@ export async function translatePaperBatchDirect(input: {
   const prompt = systemPrompt(targetLanguage);
   const content = batchPayload(units, context);
   let response: Response;
-  let raw: unknown;
+  let candidates: unknown[];
   if (config.provider === "openai") {
     response = await providerFetch(url, {
       method: "POST",
       headers: { Authorization: `Bearer ${config.apiKey}`, "Content-Type": "application/json" },
-      body: JSON.stringify({ model: config.model, instructions: prompt, input: content, text: { format: { type: "json_object" } } }),
+      body: JSON.stringify({
+        model: config.model, instructions: prompt, input: content,
+        max_output_tokens: MAX_PROVIDER_OUTPUT_TOKENS,
+        text: { format: { type: "json_object" } },
+      }),
     }, signal);
     const body = await response.json() as { output_text?: string; output?: Array<{ content?: Array<{ text?: string }> }> };
-    raw = parseJsonObject(body.output_text ?? body.output?.flatMap((item) => item.content ?? []).find((item) => item.text)?.text ?? "");
+    candidates = parseJsonObjects(body.output_text ?? body.output?.flatMap((item) => item.content ?? []).find((item) => item.text)?.text ?? "");
   } else if (config.provider === "anthropic") {
     response = await providerFetch(url, {
       method: "POST",
@@ -216,10 +271,10 @@ export async function translatePaperBatchDirect(input: {
         "x-api-key": config.apiKey, "anthropic-version": "2023-06-01",
         "anthropic-dangerous-direct-browser-access": "true", "Content-Type": "application/json",
       },
-      body: JSON.stringify({ model: config.model, max_tokens: 8192, system: prompt, messages: [{ role: "user", content }] }),
+      body: JSON.stringify({ model: config.model, max_tokens: MAX_PROVIDER_OUTPUT_TOKENS, system: prompt, messages: [{ role: "user", content }] }),
     }, signal);
     const body = await response.json() as { content?: Array<{ type?: string; text?: string }> };
-    raw = parseJsonObject(body.content?.find((item) => item.type === "text")?.text ?? "");
+    candidates = parseJsonObjects(body.content?.find((item) => item.type === "text")?.text ?? "");
   } else {
     response = await providerFetch(url, {
       method: "POST",
@@ -228,12 +283,77 @@ export async function translatePaperBatchDirect(input: {
         model: config.model,
         messages: [{ role: "system", content: prompt }, { role: "user", content }],
         response_format: { type: "json_object" }, temperature: 0.1,
+        ...(config.provider === "deepseek" ? {
+          max_tokens: MAX_PROVIDER_OUTPUT_TOKENS,
+          thinking: { type: "disabled" },
+        } : {}),
       }),
     }, signal);
     const body = await response.json() as { choices?: Array<{ message?: { content?: string } }> };
-    raw = parseJsonObject(body.choices?.[0]?.message?.content ?? "");
+    candidates = parseJsonObjects(body.choices?.[0]?.message?.content ?? "");
   }
-  return validateUnits(raw, units);
+  return validateResponse(candidates, units);
+}
+
+export type PaperBatchTranslator = (input: {
+  config: PaperTranslationProviderConfig;
+  targetLanguage: TranslationTargetLanguage;
+  units: PaperTranslationUnit[];
+  context: string;
+  signal: AbortSignal;
+}) => Promise<Map<string, string>>;
+
+function splitUnitsNearHalf(units: PaperTranslationUnit[]): [PaperTranslationUnit[], PaperTranslationUnit[]] {
+  const target = units.reduce((total, unit) => total + unit.text.length, 0) / 2;
+  let characters = 0;
+  let splitAt = 1;
+  for (let index = 0; index < units.length - 1; index += 1) {
+    characters += units[index]!.text.length;
+    splitAt = index + 1;
+    if (characters >= target) break;
+  }
+  return [units.slice(0, splitAt), units.slice(splitAt)];
+}
+
+export async function translatePaperBatchRecovering(
+  input: Parameters<PaperBatchTranslator>[0],
+  translator: PaperBatchTranslator = translatePaperBatch,
+): Promise<Map<string, string>> {
+  const translateSubset = async (
+    units: PaperTranslationUnit[],
+    context: string,
+    singleRetry: boolean,
+  ): Promise<Map<string, string>> => {
+    try {
+      return await translator({ ...input, units, context });
+    } catch (reason) {
+      if (paperErrorCode(reason) !== "invalid-output") throw reason;
+      const recoveryContext = [
+        context,
+        "Output recovery: return every requested id exactly once as valid JSON. Preserve every __WRP_...__ token exactly.",
+      ].filter(Boolean).join("\n\n");
+      if (units.length === 1) {
+        if (singleRetry) throw reason;
+        return translateSubset(units, recoveryContext, true);
+      }
+      const [leftUnits, rightUnits] = splitUnitsNearHalf(units);
+      const left = await translateSubset(leftUnits, recoveryContext, false);
+      const recoveredContext = [...left.values()].slice(-2).join("\n");
+      const right = await translateSubset(
+        rightUnits,
+        [recoveryContext, recoveredContext && `Previous translated context:\n${recoveredContext}`].filter(Boolean).join("\n\n"),
+        false,
+      );
+      return new Map([...left, ...right]);
+    }
+  };
+  return translateSubset(input.units, input.context, false);
+}
+
+function paperErrorCode(reason: unknown): PaperTranslationError["code"] | undefined {
+  const code = (reason as { code?: unknown })?.code;
+  return typeof code === "string" && PAPER_ERROR_CODES.has(code as PaperTranslationError["code"])
+    ? code as PaperTranslationError["code"] : undefined;
 }
 
 interface TranslatorResponseMessage {

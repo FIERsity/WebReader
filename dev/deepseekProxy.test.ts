@@ -27,7 +27,8 @@ describe("DeepSeek development proxy", () => {
       const headers = init?.headers as Record<string, string>;
       expect(headers.Authorization).toBe("Bearer test-secret-key");
       const body = JSON.parse(String(init?.body));
-      expect(body.model).toBe("deepseek-chat");
+      expect(body.model).toBe("deepseek-v4-pro");
+      expect(body.thinking).toEqual({ type: "disabled" });
       expect(body.response_format).toEqual({ type: "json_object" });
       expect(body.messages[1].content).toContain("The method is robust.");
       return new Response(JSON.stringify({

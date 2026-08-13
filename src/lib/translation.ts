@@ -4,7 +4,7 @@ import type {
 } from "../types/translation.js";
 
 export const TRANSLATION_PROVIDER = "deepseek" as const;
-export const TRANSLATION_MODEL = "deepseek-chat" as const;
+export const TRANSLATION_MODEL = "deepseek-v4-pro" as const;
 export const TRANSLATION_PROMPT_VERSION = "translate-v1" as const;
 export const MAX_TRANSLATION_CHARACTERS = 12_000;
 

@@ -45,7 +45,7 @@ Production paper translation is BYOK and runs only after an explicit whole-paper
 
 - OpenAI Responses API
 - Anthropic Messages API
-- DeepSeek Chat Completions API
+- DeepSeek Chat Completions API (`deepseek-v4-pro` by default for translation quality, with `deepseek-v4-flash` as the faster lower-cost option; non-thinking JSON mode)
 - Custom OpenAI-compatible Chat Completions endpoint over HTTPS
 
 A ChatGPT or Claude web subscription generally does not include API usage. The selected provider may charge its normal API rates and receives the confirmed paper text batches under its own data policy. Browser-direct requests depend on the provider's CORS support for the WebReader Pages origin. The translation runtime uses a separate entry, bundle, CSP, and private MessageChannel, but it remains same-origin so static Pages can load its module; this is a capability boundary, not protection from compromised same-origin code, browser extensions, or developer tools. Use a revocable temporary API key. If a provider blocks browser access, use a compatible HTTPS endpoint that explicitly permits the WebReader origin, or a future local companion/controlled backend; WebReader does not weaken the main reader CSP or host a shared secret.

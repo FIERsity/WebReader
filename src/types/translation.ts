@@ -37,7 +37,7 @@ export interface TranslationCacheRecord {
   anchor: TranslationAnchor;
   targetLanguage: TranslationTargetLanguage;
   provider: "deepseek";
-  model: "deepseek-chat";
+  model: "deepseek-v4-pro";
   promptVersion: "translate-v1";
   translatedText: string;
   createdAt: number;
@@ -58,7 +58,7 @@ export interface TranslationResponse {
   version: 1;
   translation: { id: string; text: string };
   provider: "deepseek";
-  model: "deepseek-chat";
+  model: "deepseek-v4-pro";
   promptVersion: "translate-v1";
 }
 

@@ -46,7 +46,7 @@ describe("translation protocol", () => {
       version: 1,
       translation: { id: "unit-1", text: "你好" },
       provider: "deepseek",
-      model: "deepseek-chat",
+      model: "deepseek-v4-pro",
       promptVersion: "translate-v1",
     }, "unit-1").translation.text).toBe("你好");
     expect(() => parseTranslationResponse({ version: 1 }, "unit-1")).toThrow(/invalid/);
