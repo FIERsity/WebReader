@@ -195,6 +195,23 @@ describe("PDF paper text analysis", () => {
     expect(page.blocks.every((block) => block.text.length <= MAX_PDF_BLOCK_CHARACTERS + 200)).toBe(true);
   });
 
+  it("keeps a merged cross-page block anchored to its first source page", () => {
+    const pages = [1, 2].map((pageNumber) => analyzePdfTextPage({
+      page: pageNumber,
+      width: PAGE_WIDTH,
+      height: PAGE_HEIGHT,
+      items: paragraph(pageNumber === 1
+        ? "This sufficiently long reconstruction paragraph continues across the page bound\u00ad"
+        : "ary and remains traceable to both original page regions after deterministic reflow.", 70, pageNumber === 1 ? 680 : 65, 360),
+    }));
+    const document = buildPdfPaperDocument(pages);
+    const merged = document.blocks.find((block) => block.text.includes("boundary and remains"));
+
+    expect(merged?.fragments.map((fragment) => fragment.page)).toEqual([1, 2]);
+    expect(merged?.fragments[0]?.page).toBe(1);
+    expect(document.blocks.filter((block) => block.id === merged?.id)).toHaveLength(1);
+  });
+
   it("removes recurring marginal headers and merges cross-page soft hyphenation", () => {
     const pages = [1, 2, 3].map((pageNumber) => analyzePdfTextPage({
       page: pageNumber,

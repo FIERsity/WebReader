@@ -1,4 +1,4 @@
-import { FileText, Languages, LoaderCircle, Pause, Rows3 } from "lucide-react";
+import { Columns2, FileText, Languages, LoaderCircle, Pause, Rows3 } from "lucide-react";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import {
   GlobalWorkerOptions, getDocument, TextLayer, type PDFDocumentProxy, type PDFPageProxy,
@@ -35,6 +35,7 @@ import pdfWorkerUrl from "pdfjs-dist/build/pdf.worker.min.mjs?url";
 
 GlobalWorkerOptions.workerSrc = pdfWorkerUrl;
 
+const PAPER_TRANSLATION_ENABLED = false;
 const pageRenderLeases = new WeakMap<PDFPageProxy, number>();
 
 function acquirePageLease(page: PDFPageProxy): () => void {
@@ -344,8 +345,9 @@ export function PdfReader({
   const providerConfigRef = useRef<PaperTranslationProviderConfig | undefined>(undefined);
   const translationRunRef = useRef<string | undefined>(undefined);
   const translationRequestedRef = useRef(false);
+  const pendingPaperModeRef = useRef<"article" | "proof" | undefined>(undefined);
   const [viewMode, setViewMode] = useState<"pdf" | "paper">("pdf");
-  const [paperDisplayMode, setPaperDisplayMode] = useState<"paired" | "translation">("paired");
+  const [paperDisplayMode, setPaperDisplayMode] = useState<"article" | "proof" | "paired" | "translation">("article");
   const [activeBlockId, setActiveBlockId] = useState<string>();
   const [documentRevision, setDocumentRevision] = useState<string>();
   const [translationDialogOpen, setTranslationDialogOpen] = useState(false);
@@ -869,6 +871,20 @@ export function PdfReader({
     providerConfigRef.current = undefined;
   }, []);
 
+  useEffect(() => {
+    if (!pendingPaperModeRef.current || pageCount === 0 || analysis.status !== "idle") return;
+    void startAnalysis();
+  }, [analysis.status, pageCount, startAnalysis]);
+
+  useEffect(() => {
+    if (analysis.status !== "ready" || !pendingPaperModeRef.current) return;
+    const mode = pendingPaperModeRef.current;
+    pendingPaperModeRef.current = undefined;
+    setPaperDisplayMode(mode);
+    pendingPaperPageRef.current = currentLocationRef.current.page;
+    setViewMode("paper");
+  }, [analysis.status]);
+
   useLayoutEffect(() => {
     if (!showingPaper) return;
     const page = pendingPaperPageRef.current ?? currentLocationRef.current.page;
@@ -956,16 +972,47 @@ export function PdfReader({
     setViewMode(next);
   }, [analysis.status, continuous, startAnalysis, viewMode]);
 
+  const openPaperMode = useCallback((mode: "article" | "proof") => {
+    setPaperDisplayMode(mode);
+    if (analysis.status !== "ready") {
+      pendingPaperModeRef.current = mode;
+      void startAnalysis();
+      return;
+    }
+    changeView("paper");
+  }, [analysis.status, changeView, startAnalysis]);
+
+  const renderPaperBlock = (block: PdfPaperBlock, page: number) => (
+    <div
+      className={`pdf-paper-row pdf-source-only-row ${activeBlockId === block.id ? "active" : ""}`}
+      data-block-id={block.id}
+      key={`${page}-${block.id}`}
+      onClick={() => selectBlock(block, page)}
+      onPointerUp={() => handlePaperSelection(block)}
+    >
+      <div className={`pdf-paper-source pdf-block-${block.kind}`}>
+        <span className="pdf-block-kind">{t(`pdfBlock_${block.kind}` as TranslationKey)}</span>
+        <span>{block.text}</span>
+      </div>
+    </div>
+  );
+
   if (error) return <p className="reader-error">{t(error)}</p>;
 
   return (
     <div className={`reader-stage pdf-stage ${continuousCanvas ? "pdf-continuous" : "pdf-paginated"} ${showingPaper ? "pdf-paper-stage" : ""} theme-${preferences.theme}`} ref={setStage}>
       <div className="pdf-view-toolbar" role="toolbar" aria-label={t("pdfViewMode")}>
         <div className="pdf-view-switch" role="group" aria-label={t("pdfViewMode")}>
-          <button type="button" className={!showingPaper ? "active" : ""} aria-pressed={!showingPaper} onClick={() => changeView("pdf")}>
+          <button type="button" className={!showingPaper ? "active" : ""} aria-pressed={!showingPaper} onClick={() => { pendingPaperModeRef.current = undefined; changeView("pdf"); }}>
             <FileText />{t("originalPdf")}
           </button>
-          {analysis.status === "ready" && translationJob && (
+          <button type="button" className={showingPaper && paperDisplayMode === "article" ? "active" : ""} aria-pressed={showingPaper && paperDisplayMode === "article"} onClick={() => openPaperMode("article")}>
+            {analysis.status === "running" && pendingPaperModeRef.current === "article" ? <LoaderCircle className="spin" /> : <Rows3 />}{t("reflowedArticle")}
+          </button>
+          <button type="button" className={showingPaper && paperDisplayMode === "proof" ? "active" : ""} aria-pressed={showingPaper && paperDisplayMode === "proof"} onClick={() => openPaperMode("proof")}>
+            {analysis.status === "running" && pendingPaperModeRef.current === "proof" ? <LoaderCircle className="spin" /> : <Columns2 />}{t("proofreadLayout")}
+          </button>
+          {PAPER_TRANSLATION_ENABLED && analysis.status === "ready" && translationJob && (
             <>
               <button type="button" className={showingPaper && paperDisplayMode === "paired" ? "active" : ""} aria-pressed={showingPaper && paperDisplayMode === "paired"} onClick={() => { setPaperDisplayMode("paired"); changeView("paper"); }}>
                 <Rows3 />{t("pairedTranslation")}
@@ -976,19 +1023,63 @@ export function PdfReader({
             </>
           )}
         </div>
-        <button className="pdf-translate-command" type="button" onClick={requestPaperTranslation} disabled={analysis.status === "running" || translationJob?.status === "running"}>
-          {analysis.status === "running" || translationJob?.status === "running" ? <LoaderCircle className="spin" /> : <Languages />}
-          {translationJob && translationJob.completedUnits < translationJob.totalUnits ? t("resumeTranslation") : t("translatePaper")}
-        </button>
-        {translationJob?.status === "running" && (
+        {PAPER_TRANSLATION_ENABLED && (
+          <button className="pdf-translate-command" type="button" onClick={requestPaperTranslation} disabled={analysis.status === "running" || translationJob?.status === "running"}>
+            {analysis.status === "running" || translationJob?.status === "running" ? <LoaderCircle className="spin" /> : <Languages />}
+            {translationJob && translationJob.completedUnits < translationJob.totalUnits ? t("resumeTranslation") : t("translatePaper")}
+          </button>
+        )}
+        {PAPER_TRANSLATION_ENABLED && translationJob?.status === "running" && (
           <button className="pdf-pause-command" type="button" onClick={pausePaperTranslation}><Pause />{t("pauseTranslation")}</button>
         )}
         {analysis.status === "running" && <span>{t("pdfAnalysisProgress", { current: analysis.completedPages, total: analysis.totalPages })}</span>}
-        {translationJob && <span>{t("paperTranslationProgress", { current: translationJob.completedUnits, total: translationJob.totalUnits })}</span>}
+        {PAPER_TRANSLATION_ENABLED && translationJob && <span>{t("paperTranslationProgress", { current: translationJob.completedUnits, total: translationJob.totalUnits })}</span>}
         {analysis.status === "failed" && <span className="pdf-analysis-error">{t("pdfAnalysisFailed")}</span>}
-        {translationError && <span className="pdf-analysis-error">{translationError}</span>}
+        {PAPER_TRANSLATION_ENABLED && translationError && <span className="pdf-analysis-error">{translationError}</span>}
       </div>
-      {showingPaper && analysis.document && translationJob ? (
+      {showingPaper && analysis.document && (paperDisplayMode === "article" || paperDisplayMode === "proof") ? (
+        <article className={`pdf-paper-document mode-${paperDisplayMode}`}>
+          <div className="pdf-paper-summary" aria-label={t("reflowSummary")}>
+            <div><strong>{analysis.document.pages.length}</strong><span>{t("pdfPages")}</span></div>
+            <div><strong>{analysis.document.blocks.length}</strong><span>{t("pdfBlocks")}</span></div>
+            <div><strong>{analysis.document.characterCount.toLocaleString()}</strong><span>{t("pdfCharacters")}</span></div>
+            <div><strong>{analysis.document.reviewPages.length + analysis.document.rejectedPages.length}</strong><span>{t("pagesNeedingReview")}</span></div>
+          </div>
+          {(analysis.document.reviewPages.length > 0 || analysis.document.rejectedPages.length > 0) && (
+            <p className="pdf-paper-warning">{t("reflowReviewWarning", {
+              review: analysis.document.reviewPages.length,
+              rejected: analysis.document.rejectedPages.length,
+            })}</p>
+          )}
+          <div className="pdf-reflow-pages">
+            {analysis.document.pages.map((page) => {
+              const blocks = analysis.document!.blocks.filter((block) => block.fragments[0]?.page === page.page);
+              return (
+                <section className={`pdf-reflow-page quality-${page.quality}`} key={page.page}>
+                  <div className="pdf-paper-page-marker" data-paper-page={page.page}>
+                    <span>{t("page", { page: page.page })}</span>
+                    {page.quality !== "supported" && <strong>{t(page.quality === "rejected" ? "pdfPageRejected" : "pdfPageReview")}</strong>}
+                  </div>
+                  {paperDisplayMode === "proof" ? (
+                    <div className="pdf-proof-row">
+                      <div className="pdf-proof-preview">
+                        {pdfDocument && <PdfPagePreview pdf={pdfDocument} pageNumber={page.page} label={t("pdfPageVisual", { page: page.page })} onError={handleRenderError} />}
+                      </div>
+                      <div className="pdf-proof-text">
+                        {blocks.length > 0 ? blocks.map((block) => renderPaperBlock(block, page.page)) : (
+                          <p className="pdf-paper-empty-page">{t(page.quality === "rejected" ? "pdfVisualFallback" : "pdfPageEmpty")}</p>
+                        )}
+                      </div>
+                    </div>
+                  ) : blocks.length > 0 ? blocks.map((block) => renderPaperBlock(block, page.page)) : (
+                    <p className="pdf-paper-empty-page">{t(page.quality === "rejected" ? "pdfVisualFallback" : "pdfPageEmpty")}</p>
+                  )}
+                </section>
+              );
+            })}
+          </div>
+        </article>
+      ) : PAPER_TRANSLATION_ENABLED && showingPaper && analysis.document && translationJob ? (
         <article className={`pdf-paper-document mode-${paperDisplayMode}`}>
           <div className="pdf-paper-columns" aria-label={paperDisplayMode === "paired" ? t("pairedTranslation") : t("translationOnly")}>
             {paperDisplayMode === "paired" && <div className="pdf-paper-column-header">{t("sourceText")}</div>}
@@ -1072,7 +1163,7 @@ export function PdfReader({
           onError={handleRenderError}
         />
       )}
-      {translationDialogOpen && analysis.document && (
+      {PAPER_TRANSLATION_ENABLED && translationDialogOpen && analysis.document && (
         <PdfTranslationDialog
           blockCount={paperUnits.length}
           characterCount={paperUnits.reduce((total, unit) => total + unit.text.length, 0)}
