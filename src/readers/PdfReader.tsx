@@ -325,6 +325,7 @@ function PdfPageSlot({
     <div className="continuous-pdf-page" data-page={pageNumber} style={{ top: pageTop, height: pageHeight }}>
       {page && (
         <PdfCanvas
+          key={`${page.pageNumber}-${Math.round(availableWidth)}`}
           page={page}
           availableWidth={availableWidth}
           label={t("pdfPage", { page: pageNumber, total: pdf.numPages })}
@@ -929,6 +930,7 @@ export function PdfReader({
         </div>
       ) : singlePage && (
         <PdfCanvas
+          key={`${singlePage.pageNumber}-${Math.round(availableWidth)}`}
           page={singlePage}
           availableWidth={availableWidth}
           label={t("pdfPage", { page: pageNumber, total: pageCount || "..." })}
