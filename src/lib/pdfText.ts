@@ -1,4 +1,4 @@
-export const PDF_TEXT_ALGORITHM_VERSION = 2;
+export const PDF_TEXT_ALGORITHM_VERSION = 3;
 export const MAX_PDF_ANALYSIS_PAGES = 300;
 export const MAX_PDF_TEXT_ITEMS_PER_PAGE = 20_000;
 export const MAX_PDF_ANALYSIS_CHARACTERS = 2_000_000;
@@ -91,6 +91,7 @@ interface NormalizedItem extends PdfNormalizedRect {
   text: string;
   fontHeight: number;
   vertical: boolean;
+  hasEOL: boolean;
 }
 
 interface TextLine extends PdfNormalizedRect {
@@ -161,6 +162,7 @@ function normalizeItem(item: PdfRawTextItem, sourceIndex: number, pageWidth: num
     height: clamp(fontHeight / pageHeight),
     fontHeight: fontHeight / pageHeight,
     vertical,
+    hasEOL: item.hasEOL,
   };
 }
 
@@ -178,7 +180,112 @@ function joinText(previous: string, next: string, gap: number, fontHeight: numbe
   return `${previous} ${next}`;
 }
 
-function buildLines(items: NormalizedItem[]): TextLine[] {
+interface LayoutGutter {
+  position: number;
+  top: number;
+  bottom: number;
+  count: number;
+  pairedCount: number;
+}
+
+function detectRepeatedGutters(rows: NormalizedItem[][]): LayoutGutter[] {
+  const binSize = 0.0125;
+  const bins = new Map<number, { positions: number[]; tops: number[]; paired: boolean[] }>();
+  for (const row of rows) {
+    const sorted = [...row].sort((a, b) => a.left - b.left);
+    const seen = new Set<number>();
+    for (let index = 0; index < sorted.length; index += 1) {
+      const item = sorted[index]!;
+      if (item.left < 0.46 || item.left > 0.82) continue;
+      const bin = Math.round(item.left / binSize);
+      if (seen.has(bin)) continue;
+      seen.add(bin);
+      const previous = sorted.slice(0, index).findLast((candidate) => item.left - candidate.left > 0.15);
+      const gap = previous ? item.left - previous.left - previous.width : Number.NEGATIVE_INFINITY;
+      const paired = Boolean(previous && previous.hasEOL && gap >= 0.012);
+      const entry = bins.get(bin) ?? { positions: [], tops: [], paired: [] };
+      entry.positions.push(item.left);
+      entry.tops.push(item.top);
+      entry.paired.push(paired);
+      bins.set(bin, entry);
+    }
+  }
+  const minimumRows = Math.max(5, Math.ceil(rows.length * 0.045));
+  const candidates = [...bins.values()].flatMap((entry) => {
+    const points = entry.tops.map((top, index) => ({
+      top,
+      position: entry.positions[index]!,
+      paired: entry.paired[index] ?? false,
+    })).sort((a, b) => a.top - b.top);
+    const runs: typeof points[] = [];
+    for (const point of points) {
+      const run = runs.at(-1);
+      if (!run || point.top - run.at(-1)!.top > 0.09) runs.push([point]);
+      else run.push(point);
+    }
+    return runs.filter((run) => run.length >= minimumRows
+      && run.at(-1)!.top - run[0]!.top >= 0.055)
+      .map((run) => ({
+        position: median(run.map((point) => point.position)),
+        top: run[0]!.top,
+        bottom: run.at(-1)!.top,
+        count: run.length,
+        pairedCount: run.filter((point) => point.paired).length,
+      }));
+  }).filter((candidate) => {
+    const leftSupport = rows.filter((row) => {
+      const top = row[0]?.top ?? -1;
+      return top >= candidate.top - 0.025 && top <= candidate.bottom + 0.025
+        && row.some((item) => item.left < candidate.position - 0.15);
+    }).length;
+    const pairedEvidence = candidate.pairedCount >= Math.max(4, Math.ceil(candidate.count * 0.12));
+    return leftSupport >= Math.max(3, Math.ceil(candidate.count * 0.15)) && pairedEvidence;
+  });
+  candidates.sort((a, b) => b.count - a.count
+    || Math.abs(a.position - 0.5) - Math.abs(b.position - 0.5));
+  const selected: LayoutGutter[] = [];
+  for (const candidate of candidates) {
+    if (selected.some((gutter) => Math.abs(gutter.position - candidate.position) < 0.035
+      && candidate.top <= gutter.bottom + 0.09 && candidate.bottom >= gutter.top - 0.09)) continue;
+    selected.push(candidate);
+  }
+  return selected;
+}
+
+function guttersAt(gutters: LayoutGutter[], top: number): LayoutGutter[] {
+  return gutters.filter((gutter) => {
+    const extension = gutter.bottom > 0.72 ? 1 - gutter.bottom : 0.045;
+    return top >= gutter.top - 0.045 && top <= gutter.bottom + extension;
+  });
+}
+
+function mergeSuperscriptRows(rows: NormalizedItem[][]): NormalizedItem[][] {
+  const typicalHeight = median(rows.flat().map((item) => item.fontHeight));
+  const removed = new Set<NormalizedItem[]>();
+  for (const row of rows) {
+    if (row.length === 0 || !row.every((item) => item.fontHeight < typicalHeight * 0.8
+      && /^[\d,.*†‡§]+$/u.test(item.text))) continue;
+    const rowTop = median(row.map((item) => item.top));
+    const left = Math.min(...row.map((item) => item.left));
+    const right = Math.max(...row.map((item) => item.left + item.width));
+    const target = rows.filter((candidate) => candidate !== row && !removed.has(candidate))
+      .map((candidate) => ({
+        candidate,
+        top: median(candidate.map((item) => item.top)),
+        left: Math.min(...candidate.map((item) => item.left)),
+        right: Math.max(...candidate.map((item) => item.left + item.width)),
+      }))
+      .filter((candidate) => Math.abs(candidate.top - rowTop) <= typicalHeight * 1.5
+        && right >= candidate.left - 0.02 && left <= candidate.right + 0.02)
+      .sort((a, b) => Math.abs(a.top - rowTop) - Math.abs(b.top - rowTop))[0]?.candidate;
+    if (!target) continue;
+    target.push(...row);
+    removed.add(row);
+  }
+  return rows.filter((row) => !removed.has(row));
+}
+
+function buildLines(items: NormalizedItem[]): { lines: TextLine[]; gutters: LayoutGutter[] } {
   const horizontal = items.filter((item) => !item.vertical).sort((a, b) => a.top - b.top || a.left - b.left);
   const rows: NormalizedItem[][] = [];
   for (const item of horizontal) {
@@ -190,15 +297,24 @@ function buildLines(items: NormalizedItem[]): TextLine[] {
     else rows.push([item]);
   }
 
+  const mergedRows = mergeSuperscriptRows(rows);
+  const gutters = detectRepeatedGutters(mergedRows);
   const lines: TextLine[] = [];
-  for (const row of rows) {
+  for (const row of mergedRows) {
     const sorted = [...row].sort((a, b) => a.left - b.left);
+    const rowHeight = median(sorted.map((item) => item.fontHeight));
     const groups: NormalizedItem[][] = [[]];
     for (const item of sorted) {
       const group = groups.at(-1)!;
       const previous = group.at(-1);
       const gap = previous ? item.left - previous.left - previous.width : 0;
-      if (previous && gap > Math.max(0.04, Math.max(previous.fontHeight, item.fontHeight) * 2.5)) groups.push([]);
+      const activeGutter = previous ? guttersAt(gutters, item.top).find((gutter) =>
+        previous.left < gutter.position - 0.04 && item.left >= gutter.position - 0.02) : undefined;
+      const crossesGutter = Boolean(previous && activeGutter);
+      const smallInline = previous && ((previous.fontHeight < rowHeight * 0.8 && /^[\d,.*†‡§]+$/u.test(previous.text))
+        || (item.fontHeight < rowHeight * 0.8 && /^[\d,.*†‡§]+$/u.test(item.text)));
+      const keepsInlineSuperscript = smallInline && gap <= 0.02;
+      if (previous && ((crossesGutter && !keepsInlineSuperscript) || gap > 0.04 && !smallInline)) groups.push([]);
       groups.at(-1)!.push(item);
     }
     for (const group of groups) {
@@ -220,24 +336,41 @@ function buildLines(items: NormalizedItem[]): TextLine[] {
       });
     }
   }
-  return lines.filter((line) => line.text.length > 0);
+  return { lines: lines.filter((line) => line.text.length > 0), gutters };
 }
 
-function classifyColumns(lines: TextLine[]): 1 | 2 {
-  const candidates = lines.filter((line) => line.width < 0.62 && line.top > 0.06 && line.top < 0.94);
-  const left = candidates.filter((line) => line.left + line.width / 2 < 0.46);
-  const right = candidates.filter((line) => line.left + line.width / 2 > 0.54);
-  if (left.length < 3 || right.length < 3) return 1;
-  const leftRange = [Math.min(...left.map((line) => line.top)), Math.max(...left.map((line) => line.top))];
-  const rightRange = [Math.min(...right.map((line) => line.top)), Math.max(...right.map((line) => line.top))];
-  return Math.min(leftRange[1]!, rightRange[1]!) - Math.max(leftRange[0]!, rightRange[0]!) > 0.08 ? 2 : 1;
+function classifyColumns(gutters: LayoutGutter[]): 1 | 2 {
+  return gutters.length > 0 ? 2 : 1;
 }
 
-function orderLines(lines: TextLine[], columnCount: 1 | 2): TextLine[] {
+function isSemanticHeading(text: string): boolean {
+  const normalized = text.trim();
+  const english = /^(?:\d+(?:\.\d+)*\s+)?(?:abstract|introduction|methods?|results?|discussion|conclusion|references|bibliography)\b/iu.test(normalized);
+  const cjk = /^(?:(?:\d+(?:\.\d+)*|[一二三四五六七八九十]+)[、.\s]*)?(?:摘要|引言|(?:研究)?方法|结果|讨论|结论|参考文献)(?:\s|$|[：:])/u.test(normalized);
+  return english || cjk;
+}
+
+function isReferencesHeading(text: string): boolean {
+  const normalized = text.trim();
+  const english = /^(?:\d+(?:\.\d+)*\s+)?(?:references|bibliography)\b/iu.test(normalized);
+  const cjk = /^(?:(?:\d+(?:\.\d+)*|[一二三四五六七八九十]+)[、.\s]*)?参考文献(?:\s|$|[：:])/u.test(normalized);
+  return english || cjk;
+}
+
+function orderLines(lines: TextLine[], columnCount: 1 | 2, gutters: LayoutGutter[], medianHeight: number): TextLine[] {
   if (columnCount === 1) return [...lines].sort((a, b) => a.top - b.top || a.left - b.left).map((line) => ({ ...line, column: "span" }));
   const classified = lines.map((line) => {
-    const spans = line.width > 0.58 || (line.left < 0.32 && line.left + line.width > 0.68);
-    return { ...line, column: spans ? "span" as const : line.left + line.width / 2 < 0.5 ? "left" as const : "right" as const };
+    const activeGutters = guttersAt(gutters, line.top);
+    if (activeGutters.length === 0) return { ...line, column: "span" as const };
+    const nearestGutter = [...activeGutters].sort((a, b) =>
+      Math.abs(line.left - a.position) - Math.abs(line.left - b.position))[0]!;
+    const crossesGutter = line.left < nearestGutter.position - 0.08
+      && line.left + line.width > nearestGutter.position + 0.08;
+    const semanticHeading = isSemanticHeading(line.text);
+    if (crossesGutter && (line.fontHeight > medianHeight * 1.15 || semanticHeading)) {
+      return { ...line, column: "span" as const };
+    }
+    return { ...line, column: line.left >= nearestGutter.position - 0.025 ? "right" as const : "left" as const };
   });
   const spans = classified.filter((line) => line.column === "span").sort((a, b) => a.top - b.top);
   const output: TextLine[] = [];
@@ -249,7 +382,7 @@ function orderLines(lines: TextLine[], columnCount: 1 | 2): TextLine[] {
     output.push(...scoped.filter((line) => line.column === "right").sort((a, b) => a.top - b.top));
     if (span) {
       output.push(span);
-      start = span.top + span.height * 0.5;
+      start = span.top;
     }
   }
   return output;
@@ -263,7 +396,7 @@ function lineKind(line: TextLine, medianHeight: number, index: number): PdfPaper
   const mathCharacters = (text.match(/[=≈≠≤≥∑∫√∞±×÷^_{}<>α-ωΑ-Ω]/gu) ?? []).length;
   if (text.length < 180 && mathCharacters / Math.max(1, text.length) > 0.16) return "equation";
   if (index === 0 && line.fontHeight > medianHeight * 1.35 && text.length < 240) return "title";
-  if ((line.fontHeight > medianHeight * 1.18 && text.length < 180) || /^(?:\d+(?:\.\d+)*\s+)?(?:abstract|introduction|methods?|results?|discussion|conclusion|references|摘要|引言|方法|结果|讨论|结论|参考文献)\b/iu.test(text)) return "heading";
+  if ((line.fontHeight > medianHeight * 1.18 && text.length < 180) || isSemanticHeading(text)) return "heading";
   return "paragraph";
 }
 
@@ -293,8 +426,8 @@ function linesToBlocks(lines: TextLine[], page: number, medianHeight: number): P
   for (let index = 0; index < lines.length; index += 1) {
     const line = lines[index]!;
     let kind = lineKind(line, medianHeight, index);
-  if (kind === "heading" && /^(?:\d+(?:\.\d+)*\s+)?(?:references|bibliography|参考文献)\b/iu.test(line.text.trim())) inReferences = true;
-    else if (/^(?:references|bibliography|参考文献)\b/iu.test(line.text.trim())) {
+    if (kind === "heading" && isReferencesHeading(line.text)) inReferences = true;
+    else if (isReferencesHeading(line.text)) {
       kind = "heading";
       inReferences = true;
     } else if (inReferences && kind !== "heading" && kind !== "equation" && kind !== "caption") kind = "reference";
@@ -372,11 +505,11 @@ export function analyzePdfTextPage(input: {
   }
   const items = input.items.map((item, index) => normalizeItem(item, item.sourceIndex ?? index, width, height)).filter((item): item is NormalizedItem => Boolean(item));
   const verticalCount = items.filter((item) => item.vertical).length;
-  const lines = buildLines(items);
+  const { lines, gutters } = buildLines(items);
   const bodyLineHeights = lines.filter((line) => line.top >= 0.08 && line.top + line.height <= 0.92).map((line) => line.fontHeight);
   const medianHeight = percentile(bodyLineHeights.length > 0 ? bodyLineHeights : lines.map((line) => line.fontHeight), 0.35) || 0.015;
-  const columnCount = classifyColumns(lines);
-  const ordered = orderLines(lines, columnCount);
+  const columnCount = classifyColumns(gutters);
+  const ordered = orderLines(lines, columnCount, gutters, medianHeight);
   const blocks = linesToBlocks(ordered, page, medianHeight).filter((block) => !/^\d{1,4}$/u.test(block.text) || block.fragments[0]!.top > 0.15 && block.fragments[0]!.top < 0.85);
   const characterCount = blocks.reduce((total, block) => total + block.text.length, 0);
   const rawText = items.map((item) => item.text).join("");
@@ -407,18 +540,22 @@ function marginalSignature(block: PdfPaperBlock): string | undefined {
   return block.text.toLocaleLowerCase().replace(/\d+/gu, "#").replace(/\s+/gu, " ").trim();
 }
 
-function mergeCrossPageBlocks(blocks: PdfPaperBlock[]): PdfPaperBlock[] {
+function mergeReadingFlowBlocks(blocks: PdfPaperBlock[]): PdfPaperBlock[] {
   const merged: PdfPaperBlock[] = [];
   for (const block of blocks) {
     const previous = merged.at(-1);
-    const crossesPage = previous && previous.kind === "paragraph" && block.kind === "paragraph"
-      && previous.fragments.at(-1)!.page + 1 === block.fragments[0]!.page
-      && previous.fragments.at(-1)!.top > 0.68 && block.fragments[0]!.top < 0.22;
-    if (crossesPage && /[-\u00ad]$/u.test(previous.text) && /^[a-z]/u.test(block.text)) {
+    const previousFragment = previous?.fragments.at(-1);
+    const fragment = block.fragments[0];
+    const crossesColumn = previousFragment && fragment && previousFragment.page === fragment.page
+      && previous?.column === "left" && block.column === "right"
+      && previousFragment.top + previousFragment.height > 0.55 && fragment.top < 0.3;
+    const continues = previous && previous.kind === "paragraph" && block.kind === "paragraph" && crossesColumn;
+    if (continues && /[-\u00ad]$/u.test(previous.text) && /^[a-z]/u.test(block.text)) {
       const text = `${previous.text.replace(/[-\u00ad]$/u, "")}${block.text}`;
+      const mergedRect = rectUnion([...previous.fragments, ...block.fragments]);
       merged[merged.length - 1] = {
         ...previous,
-        id: `pdfb_${stableHash(`${previous.id}|${block.id}|${text}`)}`,
+        id: `pdfb_${stableHash(`${PDF_TEXT_ALGORITHM_VERSION}|${previousFragment.page}|${previous.column}|${Math.round(mergedRect.left * 250)}|${Math.round(mergedRect.top * 250)}|${text}`)}`,
         text,
         fragments: [...previous.fragments, ...block.fragments],
         sourceItems: [...previous.sourceItems, ...block.sourceItems],
@@ -442,7 +579,7 @@ export function buildPdfPaperDocument(pages: PdfAnalyzedPage[]): PdfPaperDocumen
     }
   }
   const recurring = new Set([...signaturePages].filter(([, occurrences]) => occurrences.size >= Math.max(3, Math.ceil(orderedPages.length * 0.25))).map(([signature]) => signature));
-  const blocks = mergeCrossPageBlocks(orderedPages.flatMap((page) => page.blocks.filter((block) => {
+  const blocks = mergeReadingFlowBlocks(orderedPages.flatMap((page) => page.blocks.filter((block) => {
     const signature = marginalSignature(block);
     return !signature || !recurring.has(signature);
   }))).map((block, index) => ({ ...block, readingOrder: index }));
