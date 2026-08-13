@@ -9,6 +9,7 @@ import { ReaderSettings } from "./components/ReaderSettings";
 import { submitFeedback, MAX_FEEDBACK_LENGTH } from "./lib/feedback";
 import { BookFormatError, detectBookFormat, displayTitle, formatBytes } from "./lib/formats";
 import { fingerprintFile } from "./lib/fingerprint";
+import { CoalescingWriteQueue } from "./lib/coalescingWriteQueue";
 import { resolveLanguage, translate, type Language, type TranslationKey, type TranslationVariables } from "./lib/i18n";
 import { handleReaderShortcut } from "./lib/readerShortcuts";
 import {
@@ -220,6 +221,15 @@ export default function App() {
   const navigationRef = useRef<ReaderController | null>(null);
   const profileWriteRef = useRef(Promise.resolve());
   const readingProfileRef = useRef(new Map<string, ReadingProfile>());
+  const tRef = useRef(t);
+  tRef.current = t;
+  const progressWriteRef = useRef<CoalescingWriteQueue<string, ReadingLocator> | null>(null);
+  const preferenceWriteRef = useRef<CoalescingWriteQueue<"preferences", ReaderPreferences> | null>(null);
+  if (!progressWriteRef.current) {
+    const reportFailure = () => setMessage(tRef.current("storageUnavailable"));
+    progressWriteRef.current = new CoalescingWriteQueue(updateLocator, reportFailure);
+    preferenceWriteRef.current = new CoalescingWriteQueue((_key, next) => savePreferences(next), reportFailure);
+  }
   const shortcutActionsRef = useRef<{
     previous: () => void;
     next: () => void;
@@ -267,6 +277,24 @@ export default function App() {
     }).catch(() => setMessage(t("storageUnavailable")));
     void requestPersistentStorage();
   }, [t]);
+
+  useEffect(() => {
+    const flushWrites = () => {
+      void Promise.all([
+        progressWriteRef.current?.flush(),
+        preferenceWriteRef.current?.flush(),
+        profileWriteRef.current,
+      ]);
+    };
+    const handleVisibility = () => { if (document.visibilityState === "hidden") flushWrites(); };
+    document.addEventListener("visibilitychange", handleVisibility);
+    window.addEventListener("pagehide", flushWrites);
+    return () => {
+      document.removeEventListener("visibilitychange", handleVisibility);
+      window.removeEventListener("pagehide", flushWrites);
+      flushWrites();
+    };
+  }, []);
 
   const importFiles = useCallback(async (files: File[]) => {
     if (files.length === 0) return;
@@ -346,6 +374,12 @@ export default function App() {
     setOutline([]);
     setReaderLabel(undefined);
     setCapabilities(NO_READER_CAPABILITIES);
+    await new Promise<void>((resolve) => window.requestAnimationFrame(() => resolve()));
+    await Promise.all([
+      progressWriteRef.current?.flush(),
+      preferenceWriteRef.current?.flush(),
+      profileWriteRef.current,
+    ]);
     await refreshBooks();
   }, [refreshBooks]);
 
@@ -353,13 +387,13 @@ export default function App() {
   const handleProgress = useCallback((locator: ReadingLocator) => {
     if (!activeBookId) return;
     setReaderLabel(locator.label);
-    void updateLocator(activeBookId, locator);
+    progressWriteRef.current?.enqueue(activeBookId, locator);
     setActiveBook((current) => current?.id === activeBookId ? { ...current, locator } : current);
   }, [activeBookId]);
 
   const updatePreferences = useCallback((next: ReaderPreferences) => {
     setPreferences(next);
-    void savePreferences(next);
+    preferenceWriteRef.current?.enqueue("preferences", next);
   }, []);
 
   const adjustTextSize = useCallback((delta: number) => {
@@ -368,7 +402,7 @@ export default function App() {
         ...current,
         fontSizePercent: Math.min(200, Math.max(80, current.fontSizePercent + delta)),
       };
-      void savePreferences(next);
+      preferenceWriteRef.current?.enqueue("preferences", next);
       return next;
     });
   }, []);
@@ -416,10 +450,10 @@ export default function App() {
     profileWriteRef.current = profileWriteRef.current
       .then(() => updateReadingProfile(book.id, readingProfile))
       .catch(() => {
-        setMessage(t("storageUnavailable"));
+        setMessage(tRef.current("storageUnavailable"));
         return refreshBooks();
       });
-  }, [refreshBooks, t]);
+  }, [refreshBooks]);
 
   const languageControl = (
     <div className="language-switch" role="group" aria-label={t("language")}>

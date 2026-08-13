@@ -196,6 +196,10 @@ h2 { margin: 0; font-size: 20px; }
 .pdf-stage canvas { display: block; margin: 0 auto; background: white; }
 .pdf-page-surface { position: relative; margin: 0 auto; background: white; box-shadow: 0 8px 28px rgba(0,0,0,.18); isolation: isolate; }
 .pdf-page-surface > canvas { position: absolute; inset: 0; margin: 0; box-shadow: none; }
+.pdf-page-error, .pdf-page-slot-error, .pdf-preview-error { color: #8c302a; background: #faecea; border: 1px solid #edcbc7; border-radius: 6px; padding: 14px; text-align: center; }
+.pdf-page-error { position: absolute; inset: 24px; display: grid; place-items: center; margin: 0; z-index: 4; }
+.pdf-page-slot-error { align-self: start; max-width: 580px; margin: 24px auto; }
+.pdf-preview-error { align-self: start; width: 100%; }
 .textLayer {
   color-scheme: only light; position: absolute; inset: 0; z-index: 2; overflow: clip; opacity: 1;
   line-height: 1; letter-spacing: 0; word-spacing: normal; text-align: initial; text-size-adjust: none;
@@ -249,6 +253,7 @@ h2 { margin: 0; font-size: 20px; }
 .quality-rejected > .pdf-paper-page-marker { box-shadow: inset 3px 0 #98382f; }
 .pdf-paper-row { grid-column: 1 / -1; display: grid; grid-template-columns: subgrid; position: relative; border-top: 1px solid var(--reader-toolbar-line); transition: background .12s; }
 .pdf-paper-row.active { background: rgba(23,107,87,.09); box-shadow: inset 3px 0 var(--green); }
+.pdf-paper-row:focus-visible { outline: 3px solid var(--reader-toolbar-focus); outline-offset: -3px; }
 .theme-night .pdf-paper-row.active { background: rgba(157,208,191,.1); }
 .pdf-paper-page-marker { grid-column: 1 / -1; padding: 6px 12px; display: flex; align-items: center; justify-content: center; gap: 8px; color: var(--reader-toolbar-muted); background: color-mix(in srgb, var(--reader-background) 88%, #a9afa9); text-align: center; font-size: 10px; font-variant-numeric: tabular-nums; }
 .pdf-paper-page-marker strong { color: #72551d; font-size: 9px; text-transform: uppercase; }

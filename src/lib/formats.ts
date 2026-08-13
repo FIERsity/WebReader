@@ -1,5 +1,6 @@
 import type { BookFormat } from "../types/library";
 import type { TranslationKey } from "./i18n";
+import { validateEpubContainer } from "./epubValidation";
 
 export const MAX_FILE_SIZE = 250 * 1024 * 1024;
 export const MAX_TEXT_FILE_SIZE = 8 * 1024 * 1024;
@@ -34,7 +35,14 @@ export async function detectBookFormat(file: File): Promise<BookFormat> {
       || (head[2] === 0x07 && head[3] === 0x08));
 
   if (isPdf && (file.type === PDF_MIME || extension === "pdf")) return "pdf";
-  if (isZip && (file.type === EPUB_MIME || extension === "epub")) return "epub";
+  if (isZip && (file.type === EPUB_MIME || extension === "epub")) {
+    try {
+      await validateEpubContainer(file);
+      return "epub";
+    } catch {
+      throw new BookFormatError("invalidEpub");
+    }
+  }
   if (textHint) return "txt";
 
   throw new BookFormatError("unsupportedFormat");

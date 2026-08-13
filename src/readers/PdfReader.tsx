@@ -100,43 +100,58 @@ interface PdfCanvasProps {
   label: string;
   activeFragments?: PdfPaperBlock["fragments"];
   onTextSelection?: (page: number, sourceIndexes: number[]) => void;
-  onError: () => void;
+  errorLabel: string;
 }
 
-function PdfCanvas({ page, availableWidth, label, activeFragments, onTextSelection, onError }: PdfCanvasProps) {
+function PdfCanvas({ page, availableWidth, label, activeFragments, onTextSelection, errorLabel }: PdfCanvasProps) {
   const surfaceRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const textLayerRef = useRef<HTMLDivElement>(null);
+  const renderGenerationRef = useRef(0);
+  const [renderFailed, setRenderFailed] = useState(false);
 
   useEffect(() => {
     const surface = surfaceRef.current;
     const canvas = canvasRef.current;
     const textContainer = textLayerRef.current;
     if (!surface || !canvas || !textContainer || availableWidth <= 0) return;
+    const generation = renderGenerationRef.current + 1;
+    renderGenerationRef.current = generation;
+    setRenderFailed(false);
     const base = page.getViewport({ scale: 1 });
     const scale = Math.min(2.25, Math.max(0.25, availableWidth / base.width));
     const viewport = page.getViewport({ scale });
     const outputScale = Math.min(window.devicePixelRatio || 1, 2);
+    surface.style.width = `${Math.floor(viewport.width)}px`;
+    surface.style.height = `${Math.floor(viewport.height)}px`;
+    textContainer.replaceChildren();
+    canvas.width = 0;
+    canvas.height = 0;
     if (!fitsCanvasLimit(viewport.width, viewport.height, outputScale)) {
-      onError();
+      setRenderFailed(true);
       return;
     }
     const context = canvas.getContext("2d", { alpha: false });
     if (!context) {
-      onError();
+      setRenderFailed(true);
       return;
     }
-    surface.style.width = `${Math.floor(viewport.width)}px`;
-    surface.style.height = `${Math.floor(viewport.height)}px`;
     surface.style.setProperty("--total-scale-factor", String(scale));
     canvas.width = Math.floor(viewport.width * outputScale);
     canvas.height = Math.floor(viewport.height * outputScale);
     canvas.style.width = `${Math.floor(viewport.width)}px`;
     canvas.style.height = `${Math.floor(viewport.height)}px`;
     const transform = outputScale === 1 ? undefined : [outputScale, 0, 0, outputScale, 0, 0];
-    const renderTask = page.render({ canvas, canvasContext: context, viewport, transform });
     const releasePage = acquirePageLease(page);
     let active = true;
+    let renderTask: ReturnType<PDFPageProxy["render"]>;
+    try {
+      renderTask = page.render({ canvas, canvasContext: context, viewport, transform });
+    } catch {
+      releasePage();
+      setRenderFailed(true);
+      return;
+    }
     let textLayer: TextLayer | undefined;
     let sourceItems: unknown[] = [];
     const textPromise = page.getTextContent({ includeMarkedContent: false, disableNormalization: false }).then((content) => {
@@ -159,24 +174,27 @@ function PdfCanvas({ page, availableWidth, label, activeFragments, onTextSelecti
           }
         }
       });
-    }).catch((reason: unknown) => {
-      if (active && (reason as { name?: string })?.name !== "AbortException") onError();
+    }).catch(() => {
+      // A missing text layer must not replace an otherwise readable Canvas page.
+      if (active) textContainer.replaceChildren();
     });
     void renderTask.promise.catch((reason: unknown) => {
-      if ((reason as { name?: string })?.name !== "RenderingCancelledException") onError();
+      if (active && (reason as { name?: string })?.name !== "RenderingCancelledException") setRenderFailed(true);
     });
     return () => {
       active = false;
       textLayer?.cancel();
       renderTask.cancel();
       void Promise.allSettled([renderTask.promise, textPromise]).then(() => {
-        textContainer.replaceChildren();
-        canvas.width = 0;
-        canvas.height = 0;
+        if (renderGenerationRef.current === generation) {
+          textContainer.replaceChildren();
+          canvas.width = 0;
+          canvas.height = 0;
+        }
         releasePage();
       });
     };
-  }, [availableWidth, onError, page]);
+  }, [availableWidth, page]);
 
   const handleSelection = () => {
     const selection = window.getSelection();
@@ -196,6 +214,7 @@ function PdfCanvas({ page, availableWidth, label, activeFragments, onTextSelecti
     <div ref={surfaceRef} className="pdf-page-surface" onPointerUp={handleSelection}>
       <canvas ref={canvasRef} aria-label={label} />
       <div ref={textLayerRef} className="textLayer" />
+      {renderFailed && <p className="pdf-page-error" role="alert">{errorLabel}</p>}
       {activeFragments?.filter((fragment) => fragment.page === page.pageNumber).map((fragment, index) => (
         <span
           className="pdf-source-highlight"
@@ -211,13 +230,14 @@ interface PdfPagePreviewProps {
   pdf: PDFDocumentProxy;
   pageNumber: number;
   label: string;
-  onError: () => void;
+  errorLabel: string;
 }
 
-function PdfPagePreview({ pdf, pageNumber, label, onError }: PdfPagePreviewProps) {
+function PdfPagePreview({ pdf, pageNumber, label, errorLabel }: PdfPagePreviewProps) {
   const hostRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [visible, setVisible] = useState(false);
+  const [failed, setFailed] = useState(false);
 
   useEffect(() => {
     const host = hostRef.current;
@@ -236,19 +256,26 @@ function PdfPagePreview({ pdf, pageNumber, label, onError }: PdfPagePreviewProps
     let active = true;
     let renderTask: ReturnType<PDFPageProxy["render"]> | undefined;
     let releasePage: (() => void) | undefined;
+    setFailed(false);
     void pdf.getPage(pageNumber).then((nextPage) => {
       if (!active) return;
       releasePage = acquirePageLease(nextPage);
       const base = nextPage.getViewport({ scale: 1 });
       const viewport = nextPage.getViewport({ scale: Math.min(1, 320 / base.width) });
       const context = canvas.getContext("2d", { alpha: false });
-      if (!context) return;
+      if (!context) throw new Error("Canvas is unavailable.");
       canvas.width = Math.floor(viewport.width);
       canvas.height = Math.floor(viewport.height);
-      renderTask = nextPage.render({ canvas, canvasContext: context, viewport });
+      try {
+        renderTask = nextPage.render({ canvas, canvasContext: context, viewport });
+      } catch (error) {
+        releasePage();
+        releasePage = undefined;
+        throw error;
+      }
       return renderTask.promise;
     }).catch((reason: unknown) => {
-      if ((reason as { name?: string })?.name !== "RenderingCancelledException") onError();
+      if (active && (reason as { name?: string })?.name !== "RenderingCancelledException") setFailed(true);
     });
     return () => {
       active = false;
@@ -260,9 +287,9 @@ function PdfPagePreview({ pdf, pageNumber, label, onError }: PdfPagePreviewProps
         canvas.height = 0;
       }
     };
-  }, [onError, pageNumber, pdf, visible]);
+  }, [pageNumber, pdf, visible]);
 
-  return <div ref={hostRef} className="pdf-paper-page-preview-host">{visible && <canvas ref={canvasRef} className="pdf-paper-page-preview" aria-label={label} />}</div>;
+  return <div ref={hostRef} className="pdf-paper-page-preview-host">{visible && (failed ? <span className="pdf-preview-error">{errorLabel}</span> : <canvas ref={canvasRef} className="pdf-paper-page-preview" aria-label={label} />)}</div>;
 }
 
 interface PdfPageSlotProps {
@@ -274,21 +301,25 @@ interface PdfPageSlotProps {
   t: PdfReaderProps["t"];
   activeFragments?: PdfPaperBlock["fragments"];
   onTextSelection?: (page: number, sourceIndexes: number[]) => void;
-  onError: () => void;
 }
 
 function PdfPageSlot({
-  pdf, pageNumber, availableWidth, pageTop, pageHeight, t, activeFragments, onTextSelection, onError,
+  pdf, pageNumber, availableWidth, pageTop, pageHeight, t, activeFragments, onTextSelection,
 }: PdfPageSlotProps) {
   const [page, setPage] = useState<PDFPageProxy>();
+  const [failed, setFailed] = useState(false);
 
   useEffect(() => {
     let active = true;
+    setPage(undefined);
+    setFailed(false);
     void pdf.getPage(pageNumber).then((nextPage) => {
       if (active) setPage(nextPage);
-    }).catch(onError);
+    }).catch(() => {
+      if (active) setFailed(true);
+    });
     return () => { active = false; };
-  }, [onError, pageNumber, pdf]);
+  }, [pageNumber, pdf]);
 
   return (
     <div className="continuous-pdf-page" data-page={pageNumber} style={{ top: pageTop, height: pageHeight }}>
@@ -299,9 +330,10 @@ function PdfPageSlot({
           label={t("pdfPage", { page: pageNumber, total: pdf.numPages })}
           activeFragments={activeFragments}
           onTextSelection={onTextSelection}
-          onError={onError}
+          errorLabel={t("pdfRenderFailed")}
         />
       )}
+      {failed && <p className="pdf-page-slot-error" role="alert">{t("pdfRenderFailed")}</p>}
     </div>
   );
 }
@@ -328,10 +360,12 @@ export function PdfReader({
   const [stageWidth, setStageWidth] = useState(0);
   const [pageNumber, setPageNumber] = useState(initialLocationRef.current.page);
   const [pageCount, setPageCount] = useState(0);
+  const [hasOutline, setHasOutline] = useState(false);
   const [pdfDocument, setPdfDocument] = useState<PDFDocumentProxy>();
   const [pageAspectRatios, setPageAspectRatios] = useState<number[]>([]);
   const [singlePage, setSinglePage] = useState<PDFPageProxy>();
-  const [error, setError] = useState<TranslationKey>();
+  const [singlePageFailed, setSinglePageFailed] = useState(false);
+  const [fatalError, setFatalError] = useState<TranslationKey>();
   const continuous = readingProfile === "article";
   const showingPaper = viewMode === "paper";
   const continuousCanvas = continuous && !showingPaper;
@@ -339,9 +373,26 @@ export function PdfReader({
   const pageLayout = useMemo(() => buildPdfPageLayout(pageAspectRatios, availableWidth), [availableWidth, pageAspectRatios]);
   const pageLayoutRef = useRef(pageLayout);
   pageLayoutRef.current = pageLayout;
+  const pageAspectRatiosRef = useRef(pageAspectRatios);
+  pageAspectRatiosRef.current = pageAspectRatios;
+  const measuredPageRatiosRef = useRef(new Set<number>());
   const visiblePages = useMemo(() => pdfWindowForPage(pageNumber, pageCount), [pageCount, pageNumber]);
+  const paperBlocksByPage = useMemo(() => {
+    const grouped = new Map<number, PdfPaperBlock[]>();
+    for (const block of analysis.document?.blocks ?? []) {
+      const page = block.fragments[0]?.page;
+      if (!page) continue;
+      const blocks = grouped.get(page);
+      if (blocks) blocks.push(block);
+      else grouped.set(page, [block]);
+    }
+    return grouped;
+  }, [analysis.document]);
+  const activeFragments = useMemo(
+    () => analysis.document?.blocks.find((block) => block.id === activeBlockId)?.fragments,
+    [activeBlockId, analysis.document],
+  );
 
-  const handleRenderError = useCallback(() => setError("pdfRenderFailed"), []);
   const setStage = useCallback((node: HTMLDivElement | null) => {
     stageRef.current = node;
     setStageElement(node);
@@ -375,6 +426,8 @@ export function PdfReader({
   useEffect(() => {
     let active = true;
     let task: ReturnType<typeof getDocument> | undefined;
+    measuredPageRatiosRef.current.clear();
+    setFatalError(undefined);
     void file.arrayBuffer().then((data) => {
       if (!active) return;
       task = getDocument({
@@ -389,7 +442,7 @@ export function PdfReader({
       documentRef.current = pdf;
       setPdfDocument(pdf);
       setPageCount(pdf.numPages);
-      setPageAspectRatios(continuous ? Array.from({ length: pdf.numPages }, () => 1 / 1.414) : []);
+      setPageAspectRatios(Array.from({ length: pdf.numPages }, () => 1 / 1.414));
       setPageNumber((current) => Math.min(current, pdf.numPages));
       let outline: ReaderOutlineItem[] = [];
       try {
@@ -399,39 +452,59 @@ export function PdfReader({
       }
       if (!active) return;
       onOutline(outline);
-      onCapabilities({ typography: false, outline: outline.length > 0, publisherFont: false, readingProfile: true, paginated: !continuous });
-      if (continuous) {
-        const ratios = Array.from({ length: pdf.numPages }, () => 1 / 1.414);
-        for (let start = 1; start <= pdf.numPages; start += 16) {
-          const end = Math.min(pdf.numPages, start + 15);
-          for (let pageIndex = start; pageIndex <= end; pageIndex += 1) {
-            if (!active) return;
-            const page = await pdf.getPage(pageIndex);
-            const viewport = page.getViewport({ scale: 1 });
-            ratios[pageIndex - 1] = viewport.width / viewport.height;
-          }
-          if (!active) return;
-          setPageAspectRatios((current) => {
-            const next = [...current];
-            for (let index = start; index <= end; index += 1) next[index - 1] = ratios[index - 1]!;
-            return next;
-          });
-          await new Promise<void>((resolve) => window.setTimeout(resolve, 0));
-        }
-      }
+      setHasOutline(outline.length > 0);
     }).catch(() => {
-      if (active) setError("pdfOpenFailed");
+      if (active) setFatalError("pdfOpenFailed");
     });
     return () => {
       active = false;
       documentRef.current = null;
       setPdfDocument(undefined);
+      setPageCount(0);
       setPageAspectRatios([]);
+      setHasOutline(false);
       onOutline([]);
       onCapabilities({ typography: false, outline: false, publisherFont: false, readingProfile: false, paginated: false });
       void task?.destroy();
     };
-  }, [continuous, file, onCapabilities, onOutline]);
+  }, [file, onCapabilities, onOutline]);
+
+  useEffect(() => {
+    onCapabilities({ typography: false, outline: hasOutline, publisherFont: false, readingProfile: pageCount > 0, paginated: !continuous });
+  }, [continuous, hasOutline, onCapabilities, pageCount]);
+
+  useEffect(() => {
+    const pdf = pdfDocument;
+    if (!pdf || !continuous) return;
+    let active = true;
+    const ratios = [...pageAspectRatiosRef.current];
+    void (async () => {
+      for (let start = 1; start <= pdf.numPages; start += 16) {
+        const end = Math.min(pdf.numPages, start + 15);
+        for (let pageIndex = start; pageIndex <= end; pageIndex += 1) {
+          if (!active) return;
+          if (measuredPageRatiosRef.current.has(pageIndex)) continue;
+          try {
+            const page = await pdf.getPage(pageIndex);
+            const releasePage = acquirePageLease(page);
+            try {
+              const viewport = page.getViewport({ scale: 1 });
+              ratios[pageIndex - 1] = viewport.width / viewport.height;
+              measuredPageRatiosRef.current.add(pageIndex);
+            } finally {
+              releasePage();
+            }
+          } catch {
+            // Keep the conservative default ratio for a page that cannot be measured.
+          }
+        }
+        if (!active) return;
+        setPageAspectRatios([...ratios]);
+        await new Promise<void>((resolve) => window.setTimeout(resolve, 0));
+      }
+    })().catch(() => undefined);
+    return () => { active = false; };
+  }, [continuous, pdfDocument]);
 
   useEffect(() => {
     const pdf = documentRef.current;
@@ -440,11 +513,18 @@ export function PdfReader({
       return;
     }
     let active = true;
+    setSinglePage(undefined);
+    setSinglePageFailed(false);
     void pdf.getPage(pageNumber).then((page) => {
       if (active) setSinglePage(page);
-    }).catch(handleRenderError);
+    }).catch(() => {
+      if (active) {
+        setSinglePage(undefined);
+        setSinglePageFailed(true);
+      }
+    });
     return () => { active = false; };
-  }, [continuousCanvas, handleRenderError, pageCount, pageNumber, showingPaper]);
+  }, [continuousCanvas, pageCount, pageNumber, showingPaper]);
 
   useEffect(() => {
     if (continuousCanvas || showingPaper || !singlePage || pageCount === 0) return;
@@ -625,6 +705,14 @@ export function PdfReader({
   }, []);
 
   useEffect(() => {
+    analysisAbortRef.current?.abort();
+    analysisAbortRef.current = undefined;
+    pendingPaperModeRef.current = undefined;
+    setViewMode("pdf");
+    setAnalysis({ status: "idle", completedPages: 0, totalPages: 0 });
+  }, [file]);
+
+  useEffect(() => {
     if (!pendingPaperModeRef.current || pageCount === 0 || analysis.status !== "idle") return;
     void startAnalysis();
   }, [analysis.status, pageCount, startAnalysis]);
@@ -683,6 +771,9 @@ export function PdfReader({
       stage.removeEventListener("scroll", handleScroll);
       window.cancelAnimationFrame(frame);
       window.clearTimeout(timer);
+      const { page, offset } = currentLocationRef.current;
+      const progression = pageCount <= 1 ? offset : Math.min(1, ((page - 1) + offset) / pageCount);
+      onProgress({ type: "pdf", value: serializePdfLocation(page, offset), progression, label: t("page", { page }) });
     };
   }, [analysis.document, onCurrentTarget, onProgress, pageCount, showingPaper, stageElement, t]);
 
@@ -740,7 +831,16 @@ export function PdfReader({
       className={`pdf-paper-row pdf-source-only-row ${activeBlockId === block.id ? "active" : ""}`}
       data-block-id={block.id}
       key={`${page}-${block.id}`}
+      role="button"
+      tabIndex={0}
+      aria-pressed={activeBlockId === block.id}
+      aria-label={t("showPdfSource", { text: block.text.slice(0, 80) })}
       onClick={() => selectBlock(block, page)}
+      onKeyDown={(event) => {
+        if (event.key !== "Enter" && event.key !== " ") return;
+        event.preventDefault();
+        selectBlock(block, page);
+      }}
       onPointerUp={() => handlePaperSelection(block)}
     >
       <div className={`pdf-paper-source pdf-block-${block.kind}`}>
@@ -750,7 +850,7 @@ export function PdfReader({
     </div>
   );
 
-  if (error) return <p className="reader-error">{t(error)}</p>;
+  if (fatalError) return <p className="reader-error">{t(fatalError)}</p>;
 
   return (
     <div className={`reader-stage pdf-stage ${continuousCanvas ? "pdf-continuous" : "pdf-paginated"} ${showingPaper ? "pdf-paper-stage" : ""} theme-${preferences.theme}`} ref={setStage}>
@@ -785,7 +885,7 @@ export function PdfReader({
           )}
           <div className="pdf-reflow-pages">
             {analysis.document.pages.map((page) => {
-              const blocks = analysis.document!.blocks.filter((block) => block.fragments[0]?.page === page.page);
+              const blocks = paperBlocksByPage.get(page.page) ?? [];
               return (
                 <section className={`pdf-reflow-page quality-${page.quality}`} key={page.page}>
                   <div className="pdf-paper-page-marker" data-paper-page={page.page}>
@@ -795,7 +895,7 @@ export function PdfReader({
                   {paperDisplayMode === "proof" ? (
                     <div className="pdf-proof-row">
                       <div className="pdf-proof-preview">
-                        {pdfDocument && <PdfPagePreview pdf={pdfDocument} pageNumber={page.page} label={t("pdfPageVisual", { page: page.page })} onError={handleRenderError} />}
+                        {pdfDocument && <PdfPagePreview pdf={pdfDocument} pageNumber={page.page} label={t("pdfPageVisual", { page: page.page })} errorLabel={t("pdfRenderFailed")} />}
                       </div>
                       <div className="pdf-proof-text">
                         {blocks.length > 0 ? blocks.map((block) => renderPaperBlock(block, page.page)) : (
@@ -822,9 +922,8 @@ export function PdfReader({
               pageTop={pageLayout.offsets[page - 1] ?? 0}
               pageHeight={pageLayout.heights[page - 1] ?? 1}
               t={t}
-              activeFragments={analysis.document?.blocks.find((block) => block.id === activeBlockId)?.fragments}
+              activeFragments={activeFragments}
               onTextSelection={selectSourceItems}
-              onError={handleRenderError}
             />
           ))}
         </div>
@@ -833,11 +932,12 @@ export function PdfReader({
           page={singlePage}
           availableWidth={availableWidth}
           label={t("pdfPage", { page: pageNumber, total: pageCount || "..." })}
-          activeFragments={analysis.document?.blocks.find((block) => block.id === activeBlockId)?.fragments}
+          activeFragments={activeFragments}
           onTextSelection={selectSourceItems}
-          onError={handleRenderError}
+          errorLabel={t("pdfRenderFailed")}
         />
       )}
+      {!showingPaper && !continuousCanvas && singlePageFailed && <p className="pdf-page-slot-error" role="alert">{t("pdfRenderFailed")}</p>}
       {!showingPaper && <div className="page-status" aria-live="polite">{pageNumber} / {pageCount || "..."}</div>}
     </div>
   );

@@ -18,6 +18,8 @@ Production: https://FIERsity.github.io/WebReader/
 - Keyboard navigation for page turns, contents, text size, and panel dismissal
 - Explicit text-only feedback submission to the developer's feedback server
 - Duplicate detection, local deletion, a 250 MB per-file safety limit for EPUB/PDF, and an 8 MB limit for browser-rendered TXT/Markdown
+- Bounded EPUB container preflight that rejects encrypted, malformed, path-unsafe, duplicate, and excessive expanded entries before they reach the library
+- Ordered, coalesced local writes for reading progress and preferences, flushed when leaving a reader or hiding the page
 - Installable PWA application shell
 - Fully static GitHub Pages deployment
 
@@ -33,10 +35,12 @@ Requires Node.js 24 or newer.
 npm ci
 npm run dev
 npm run check
+npm run test:e2e
 npm run preview
 ```
 
 `npm run check` runs unit tests, lint, TypeScript, and the production build.
+`npm run test:e2e` builds the production application and exercises synthetic EPUB/PDF/text import, navigation, progress restoration, and PWA cache privacy in Chromium. Install its browser once with `npx playwright install chromium`; use `PLAYWRIGHT_USE_SYSTEM_CHROME=1 npm run test:e2e` to run against a local Chrome installation.
 
 ### Local Paper Reflow
 
@@ -59,7 +63,7 @@ The production build uses relative paths so application chunks, PDF workers, the
 - PDF files use worker-backed Canvas rendering as the authoritative source, with an official PDF.js TextLayer overlay for local selection. Continuous mode mounts only a bounded page window, and WebReader does not create PDF scripting managers, sandboxes, or run document JavaScript actions. Bounded local analysis preserves source-item provenance and stable block IDs for alignment
 - Scroll mode is format-aware: reflowable EPUB scrolls continuously within each chapter and advances at chapter boundaries; TXT and Markdown use continuous vertical scrolling, while their paged mode uses viewport-sized horizontal columns; fixed-layout EPUB remains paginated
 - Reader fonts use local system stacks or fonts embedded by the publisher; WebReader does not fetch remote fonts
-- Extensions and MIME types are checked alongside file signatures where available
+- Extensions and MIME types are checked alongside file signatures where available. EPUB ZIP containers are preflighted with bounded entry count, per-entry and total expanded sizes, compression ratio, metadata, path, duplicate-entry, and encryption checks before import
 
 Only use books you have the right to read. WebReader does not implement or circumvent DRM.
 

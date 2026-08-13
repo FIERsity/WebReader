@@ -95,21 +95,30 @@ export function TextReader({
   const scrollFrameRef = useRef(0);
   const wheelGestureRef = useRef(new WheelGesture());
   const [text, setText] = useState("");
+  const [loaded, setLoaded] = useState(false);
   const [error, setError] = useState<TranslationKey>();
   const [pageLayout, setPageLayout] = useState<TextPageLayout>();
   const [pageTrackWidth, setPageTrackWidth] = useState(0);
   const blocks = useMemo(() => splitTextBlocks(text), [text]);
+  const hasReadableText = text.trim().length > 0;
   const markdown = mediaType === "text/markdown" || /\.md$/i.test(fileName);
   const paginated = readingProfile === "book";
 
   useEffect(() => {
     let active = true;
     setText("");
+    setLoaded(false);
     setError(undefined);
     void decodeText(file).then((value) => {
-      if (active) setText(value.replace(/^\uFEFF/, ""));
+      if (active) {
+        setText(value.replace(/^\uFEFF/, ""));
+        setLoaded(true);
+      }
     }).catch(() => {
-      if (active) setError("textDecodeFailed");
+      if (active) {
+        setError("textDecodeFailed");
+        setLoaded(true);
+      }
     });
     return () => { active = false; };
   }, [file]);
@@ -378,7 +387,7 @@ export function TextReader({
     <div className={`reader-stage text-stage text-stage-${paginated ? "paged" : "scroll"} theme-${preferences.theme}`} ref={scrollRef}>
       {paginated && pageTrackWidth > 0 && <span className="text-page-track" aria-hidden="true" style={{ width: `${pageTrackWidth}px` }} />}
       <article ref={articleRef} style={articleStyle}>
-        {text ? blocks.map((block) => (
+        {hasReadableText ? blocks.map((block) => (
           <p
             key={block.id}
             ref={(node) => { if (node) blocksRef.current.set(block.start, node); else blocksRef.current.delete(block.start); }}
@@ -386,7 +395,7 @@ export function TextReader({
           >
             {block.text}
           </p>
-        )) : t("loadingText")}
+        )) : loaded ? t("emptyText") : t("loadingText")}
       </article>
     </div>
   );
