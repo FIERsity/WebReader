@@ -535,6 +535,7 @@ export default function App() {
               )}
               {activeBook.format === "txt" && (
                 <TextReader
+                  layoutRevision={readerPanel ?? "closed"}
                   readingProfile={activeBook.readingProfile}
                   file={activeFile}
                   fileName={activeBook.fileName}

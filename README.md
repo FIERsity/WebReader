@@ -11,7 +11,7 @@ Production: https://FIERsity.github.io/WebReader/
 - PDF rendering with PDF.js, selectable text over the authoritative Canvas, document outlines, page progress, and windowed continuous scrolling
 - Local PDF article reflow for text-layer papers, with deterministic single-column reading order, per-page diagnostics, and a side-by-side proof view
 - Stable source-block mapping between reflowed text and the authoritative PDF Canvas/TextLayer
-- TXT and Markdown-as-text reading with UTF-8/GB18030 fallback, local heading outlines, and continuous scrolling
+- TXT and Markdown-as-text reading with UTF-8/GB18030 fallback, local heading outlines, true horizontal pagination, and continuous scrolling
 - Reader-toolbar switch between paged and scrolling modes for reflowable EPUB, PDF, TXT, and Markdown, remembered per document
 - Chinese/English interface with a locally remembered language choice
 - Reading controls for text size, local font stacks, line spacing, first-line indent, text width, and four background themes
@@ -57,7 +57,7 @@ The production build uses relative paths so application chunks, PDF workers, the
 - Source books are stored in browser IndexedDB and never included in GitHub artifacts
 - EPUB scripted content and external network access are blocked by Content Security Policy
 - PDF files use worker-backed Canvas rendering as the authoritative source, with an official PDF.js TextLayer overlay for local selection. Continuous mode mounts only a bounded page window, and WebReader does not create PDF scripting managers, sandboxes, or run document JavaScript actions. Bounded local analysis preserves source-item provenance and stable block IDs for alignment
-- Scroll mode is format-aware: reflowable EPUB scrolls continuously within each chapter and advances at chapter boundaries; fixed-layout EPUB remains paginated
+- Scroll mode is format-aware: reflowable EPUB scrolls continuously within each chapter and advances at chapter boundaries; TXT and Markdown use continuous vertical scrolling, while their paged mode uses viewport-sized horizontal columns; fixed-layout EPUB remains paginated
 - Reader fonts use local system stacks or fonts embedded by the publisher; WebReader does not fetch remote fonts
 - Extensions and MIME types are checked alongside file signatures where available
 

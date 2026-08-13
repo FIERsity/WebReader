@@ -267,12 +267,20 @@ h2 { margin: 0; font-size: 20px; }
 .continuous-pdf-page { position: absolute; left: 0; right: 0; padding-bottom: 18px; display: grid; place-items: start center; }
 .continuous-pdf-page canvas { max-width: 100%; max-height: calc(100% - 18px); width: auto; height: auto; }
 .page-status { position: fixed; z-index: 4; left: 50%; bottom: 14px; transform: translateX(-50%); padding: 5px 10px; border-radius: 4px; color: white; background: rgba(30,33,31,.78); font-size: 11px; }
-.text-stage { overflow: auto; padding: 52px 82px 100px; background: #f5f1e8; }
+.text-stage { background: #f5f1e8; }
+.text-stage-scroll { overflow: auto; padding: 52px 82px 100px; }
+.text-stage-paged { position: relative; overflow-x: auto; overflow-y: hidden; overscroll-behavior-x: contain; scrollbar-width: none; }
+.text-stage-paged::-webkit-scrollbar { display: none; }
 .text-stage.theme-white { background: #fff; color: #222522; }
 .text-stage.theme-night { background: #171918; color: #e5e8e2; }
 .text-stage.theme-contrast { background: white; color: #050505; }
 .text-stage article { width: 100%; margin: 0 auto; overflow-wrap: anywhere; }
+.text-stage-paged article {
+  width: var(--text-page-width); max-width: none; height: 100%; margin: 0; padding: var(--text-page-top-inset) var(--text-page-side-inset) var(--text-page-bottom-inset);
+  column-width: var(--text-content-width); column-gap: calc(var(--text-page-side-inset) * 2); column-fill: auto;
+}
 .text-stage article p { margin: 0 0 1em; white-space: pre-wrap; }
+.text-page-track { position: absolute; inset: 0 auto 0 0; pointer-events: none; }
 .spin { animation: reader-spin 1s linear infinite; }
 @keyframes reader-spin { to { transform: rotate(360deg); } }
 .reader-error { margin: 50px auto; max-width: 580px; padding: 18px; color: #8c302a; background: #faecea; border: 1px solid #edcbc7; border-radius: 6px; }
@@ -372,7 +380,7 @@ h2 { margin: 0; font-size: 20px; }
   .outline-panel { left: 0; }
   .settings-panel { right: 0; }
   .epub-stage { padding: 0 42px; }
-  .text-stage { padding: 34px 48px 90px; }
+  .text-stage-scroll { padding: 34px 48px 90px; }
   .pdf-stage { padding-inline: 46px; }
   .pdf-paper-stage { padding-inline: 12px; }
   .pdf-view-toolbar { top: -28px; flex-wrap: wrap; }
