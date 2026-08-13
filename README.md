@@ -8,7 +8,8 @@ Production: https://FIERsity.github.io/WebReader/
 
 - Local library persisted in IndexedDB, with a per-document Book/Paper reading profile
 - EPUB reading with paginated navigation, chapter-continuous Paper mode, nested table of contents, and CFI progress
-- PDF rendering with PDF.js, document outlines, page progress, and a windowed continuous-page Paper mode
+- PDF rendering with PDF.js, document outlines, page progress, a windowed continuous-page Paper mode, and an explicit local text-layer preflight
+- A paired PDF paper-structure view with stable semantic rows, source/translation placeholders, page-quality review gates, and one-click return to the authoritative original Canvas
 - TXT and Markdown-as-text reading with UTF-8/GB18030 fallback, local heading outlines, and continuous Paper mode
 - Mouse-wheel page turns in Book mode, with trackpad gesture locking and native scrolling in Paper mode
 - Chinese/English interface with a locally remembered language choice
@@ -19,7 +20,7 @@ Production: https://FIERsity.github.io/WebReader/
 - Installable PWA application shell
 - Fully static GitHub Pages deployment
 
-Books, extracted content, reading progress, and preferences remain in the current browser during ordinary reading. Clearing site data can remove the local library. PWA installation is not a backup. Explicit feedback sends only the text the user submits. Local development builds have an additional experimental translation path: after an in-session disclosure and confirmation, only the current TXT/Markdown paragraph or a same-paragraph selection that the user individually requests is sent through a loopback-only proxy to DeepSeek. The file, title, book ID, fingerprint, reading position, and adjacent paragraphs are not sent. GitHub Pages does not include the proxy or remote-translation controls.
+Books, extracted content, reading progress, and preferences remain in the current browser during ordinary reading. Clearing site data can remove the local library. PWA installation is not a backup. PDF paper-structure preflight is explicit, bounded, and local: it analyzes only an existing text layer in memory, labels pages that need review or must be rejected, and does not persist or transmit extracted PDF text. The paired translation column is currently a layout placeholder; whole-paper translation, provider presets, API keys, and remote PDF text transmission are not connected yet. Explicit feedback sends only the text the user submits. Local development builds have an additional experimental translation path: after an in-session disclosure and confirmation, only the current TXT/Markdown paragraph or a same-paragraph selection that the user individually requests is sent through a loopback-only proxy to DeepSeek. The file, title, book ID, fingerprint, reading position, and adjacent paragraphs are not sent. GitHub Pages does not include the proxy or remote-translation controls.
 
 ## Development
 
@@ -59,7 +60,7 @@ The production build uses relative paths so application chunks, PDF workers, the
 - Local development translation is a separate opt-in exception with an in-session disclosure. It sends only the paragraph or same-paragraph selection explicitly requested by the user to DeepSeek through a loopback-only proxy; ordinary reading and the Pages build send no text to a model provider
 - Source books are stored in browser IndexedDB and never included in GitHub artifacts
 - EPUB scripted content and external network access are blocked by Content Security Policy
-- PDF files use the worker-backed Canvas rendering path. Continuous mode mounts only a bounded page window, and WebReader does not create PDF scripting managers, sandboxes, or run document JavaScript actions
+- PDF files use the worker-backed Canvas rendering path as the authoritative source. Continuous mode mounts only a bounded page window, and WebReader does not create PDF scripting managers, sandboxes, or run document JavaScript actions. Explicit paper-structure preflight uses `getTextContent()` in a separate bounded local task; it does not create a PDF.js text-layer DOM, persist extracted PDF text, or send text to a provider
 - Paper mode is format-aware: reflowable EPUB is continuous within each chapter and advances at chapter boundaries; fixed-layout EPUB remains paginated
 - Reader fonts use local system stacks or fonts embedded by the publisher; WebReader does not fetch remote fonts
 - Extensions and MIME types are checked alongside file signatures where available
