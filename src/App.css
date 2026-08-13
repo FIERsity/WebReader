@@ -204,6 +204,39 @@ h2 { margin: 0; font-size: 20px; }
 .text-stage.theme-contrast { background: white; color: #050505; }
 .text-stage article { width: 100%; margin: 0 auto; overflow-wrap: anywhere; }
 .text-stage article p { margin: 0 0 1em; white-space: pre-wrap; }
+.translation-toolbar {
+  position: sticky; z-index: 4; top: 0; width: min(1180px, 100%); margin: -32px auto 26px; padding: 7px;
+  display: flex; align-items: center; gap: 7px; border: 1px solid rgba(95,105,97,.24); background: color-mix(in srgb, var(--reader-background) 94%, transparent);
+}
+.translation-toolbar > button, .translation-language button, .bilingual-translation button {
+  min-height: 32px; padding: 0 9px; border: 1px solid rgba(95,105,97,.3); border-radius: 4px; display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+  color: inherit; background: transparent; cursor: pointer; font-size: 11px; font-weight: 680;
+}
+.translation-toolbar > button.active, .translation-language button.active { color: white; border-color: var(--green); background: var(--green); }
+.translation-toolbar svg, .bilingual-translation button svg { width: 15px; height: 15px; }
+.translation-toolbar > span { margin-left: auto; color: #98382f; font-size: 11px; }
+.translation-language { display: inline-flex; gap: 3px; }
+.translation-language button:disabled { opacity: .55; cursor: wait; }
+.translation-consent { flex: 1 1 420px; display: flex; align-items: center; justify-content: flex-end; gap: 9px; font-size: 11px; line-height: 1.4; }
+.translation-consent span { max-width: 660px; color: var(--reader-toolbar-muted); }
+.translation-consent button { min-height: 32px; padding: 0 10px; border: 0; border-radius: 4px; color: white; background: var(--green); cursor: pointer; font-weight: 700; white-space: nowrap; }
+.bilingual-document { display: grid; gap: 0; }
+.bilingual-row { display: grid; grid-template-columns: minmax(0,1fr) minmax(0,1fr); border-top: 1px solid rgba(103,110,103,.2); transition: background .12s; }
+.bilingual-row:last-child { border-bottom: 1px solid rgba(103,110,103,.2); }
+.bilingual-row.active { background: rgba(23,107,87,.1); box-shadow: inset 3px 0 var(--green); }
+.theme-night .bilingual-row.active { background: rgba(157,208,191,.12); }
+.bilingual-source, .bilingual-translation { min-width: 0; padding: 14px 16px; }
+.bilingual-source { border-right: 1px solid rgba(103,110,103,.2); }
+.bilingual-source p, .bilingual-translation p { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+.bilingual-translation { display: flex; align-items: flex-start; }
+.translated-block { width: 100%; }
+.translated-block small { display: block; margin-bottom: 6px; color: var(--reader-toolbar-muted); font-size: 10px; font-weight: 700; }
+.translated-block .retranslate-button { min-height: 26px; margin: 10px 0 0; padding-inline: 7px; font-size: 10px; }
+.bilingual-translation button { margin: auto; color: var(--green-dark); background: rgba(255,255,255,.45); }
+.theme-night .bilingual-translation button { color: #b6e1d3; background: rgba(255,255,255,.06); }
+.bilingual-translation button:disabled { opacity: .7; cursor: wait; }
+.spin { animation: reader-spin 1s linear infinite; }
+@keyframes reader-spin { to { transform: rotate(360deg); } }
 .reader-error { margin: 50px auto; max-width: 580px; padding: 18px; color: #8c302a; background: #faecea; border: 1px solid #edcbc7; border-radius: 6px; }
 .reader-loading { position: absolute; inset: 0; display: grid; place-items: center; color: #747a73; font-size: 13px; }
 .page-turn { position: absolute; z-index: 3; top: 34px; bottom: 34px; width: 46px; border: 0; background: transparent; color: rgba(45,52,47,.45); display: grid; place-items: center; cursor: pointer; }
@@ -295,6 +328,11 @@ h2 { margin: 0; font-size: 20px; }
   .settings-panel { right: 0; }
   .epub-stage { padding: 0 42px; }
   .text-stage { padding: 34px 48px 90px; }
+  .translation-toolbar { margin-top: -20px; flex-wrap: wrap; }
+  .translation-toolbar > span { width: 100%; margin-left: 0; }
+  .translation-consent { width: 100%; flex-wrap: wrap; justify-content: flex-start; }
+  .bilingual-row { grid-template-columns: 1fr; }
+  .bilingual-source { border-right: 0; border-bottom: 1px solid rgba(103,110,103,.2); }
   .pdf-stage { padding-inline: 46px; }
   .page-turn { width: 40px; }
 }

@@ -1,11 +1,35 @@
 import { describe, expect, it } from "vitest";
-import { extractMarkdownOutline, extractTextOutline, splitTextBlocks } from "./textDocument";
+import { buildStructuredTextDocument, extractMarkdownOutline, extractTextOutline, splitTextBlocks } from "./textDocument";
 
 describe("text document structure", () => {
   it("splits paragraphs while retaining source offsets", () => {
     expect(splitTextBlocks("First paragraph.\n\nSecond paragraph.")).toEqual([
-      { id: "text-0", start: 0, text: "First paragraph." },
-      { id: "text-1", start: 18, text: "Second paragraph." },
+      { id: "paragraph:0:16", start: 0, end: 16, text: "First paragraph.", kind: "paragraph" },
+      { id: "paragraph:18:35", start: 18, end: 35, text: "Second paragraph.", kind: "paragraph" },
+    ]);
+  });
+
+  it("builds stable structured blocks for translation", async () => {
+    const document = await buildStructuredTextDocument({
+      bookId: "book-1",
+      text: "# Heading\n\nParagraph\n\n```\ncode\n```",
+      markdown: true,
+      revision: "revision-1",
+    });
+    expect(document.format).toBe("markdown");
+    expect(document.blocks.map(({ id, kind }) => ({ id, kind }))).toEqual([
+      { id: "heading:0:9", kind: "heading" },
+      { id: "paragraph:11:20", kind: "paragraph" },
+      { id: "code:22:34", kind: "code" },
+    ]);
+  });
+
+  it("keeps fenced code with internal blank lines in one structured block", () => {
+    const blocks = splitTextBlocks("Before\n\n```ts\nconst a = 1;\n\nconst b = 2;\n```\n\nAfter");
+    expect(blocks.map(({ kind, text }) => ({ kind, text }))).toEqual([
+      { kind: "paragraph", text: "Before" },
+      { kind: "code", text: "```ts\nconst a = 1;\n\nconst b = 2;\n```" },
+      { kind: "paragraph", text: "After" },
     ]);
   });
 

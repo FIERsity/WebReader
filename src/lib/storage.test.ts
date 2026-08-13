@@ -4,9 +4,10 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { BookRecord, ReadingLocator } from "../types/library";
 import { DEFAULT_PREFERENCES } from "../types/library";
 import {
-  db, findByFingerprint, getBookFile, getPreferences, listBooks, removeBook,
-  saveBook, savePreferences, updateLocator, updateReadingProfile,
+  db, findByFingerprint, getBookFile, getPreferences, getTranslation, listBooks, listTranslations, removeBook,
+  putTranslation, saveBook, savePreferences, updateLocator, updateReadingProfile,
 } from "./storage";
+import { createTranslationCacheRecord } from "./translation";
 
 function record(): BookRecord {
   return {
@@ -68,6 +69,40 @@ describe("local book repository", () => {
     expect(await (await getBookFile(book.id)).text()).toBe("fixture");
   });
 
+  it("stores and cascades versioned translation cache records", async () => {
+    const book = record();
+    await saveBook(book, new File(["fixture"], book.fileName));
+    const translation = await createTranslationCacheRecord({
+      bookId: book.id,
+      documentRevision: "revision-1",
+      blockId: "paragraph:0:7",
+      blockText: "fixture",
+      targetLanguage: "zh-CN",
+      translatedText: "测试文本",
+      now: 12,
+    });
+    await putTranslation(translation);
+
+    expect(await getTranslation(translation.key)).toEqual(translation);
+    expect(await listTranslations(book.id, "revision-1", "zh-CN")).toEqual([translation]);
+    expect(await listTranslations(book.id, "revision-1", "en")).toEqual([]);
+
+    await removeBook(book.id);
+    expect(await getTranslation(translation.key)).toBeUndefined();
+  });
+
+  it("does not recreate translation cache after its parent book is removed", async () => {
+    const book = record();
+    await saveBook(book, new File(["fixture"], book.fileName));
+    const translation = await createTranslationCacheRecord({
+      bookId: book.id, documentRevision: "revision-1", blockId: "paragraph:0:7",
+      blockText: "fixture", targetLanguage: "en", translatedText: "fixture",
+    });
+    await removeBook(book.id);
+    expect(await putTranslation(translation)).toBe(false);
+    expect(await getTranslation(translation.key)).toBeUndefined();
+  });
+
   it("upgrades version 1 books without changing their source or locator", async () => {
     db.close();
     await db.delete();
@@ -92,6 +127,29 @@ describe("local book repository", () => {
     expect(migrated?.readingProfile).toBe("book");
     expect(migrated?.locator).toEqual(locator);
     expect(await (await getBookFile(book.id)).text()).toBe("legacy");
+  });
+
+  it("upgrades version 2 databases by adding an empty translation store", async () => {
+    db.close();
+    await db.delete();
+    const previous = new Dexie("webreader");
+    previous.version(2).stores({
+      books: "id, &fingerprint, addedAt, updatedAt, format, readingProfile",
+      files: "bookId",
+      settings: "key",
+    });
+    await previous.open();
+    const book = { ...record(), readingProfile: "article" as const };
+    await previous.transaction("rw", previous.table("books"), previous.table("files"), async () => {
+      await previous.table("books").put(book);
+      await previous.table("files").put({ bookId: book.id, blob: new Blob(["version-2"]) });
+    });
+    previous.close();
+
+    await db.open();
+    expect((await listBooks())[0]?.readingProfile).toBe("article");
+    expect(await (await getBookFile(book.id)).text()).toBe("version-2");
+    expect(await db.translations.count()).toBe(0);
   });
 
   it("migrates stored preferences to current defaults", async () => {

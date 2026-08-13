@@ -10,8 +10,9 @@ This file applies to the WebReader repository. Cross-project strategy, Git/main 
 
 - WebReader is a private-by-default, local-first browser reader.
 - The interface is bilingual Chinese/English and defaults to Chinese; user language choice is kept in the browser.
-- Imported book bytes, extracted text, covers, reading history, annotations, and search indexes must not be uploaded to GitHub or any remote service.
-- User-submitted feedback text is the only allowed runtime network exception. It may be sent to the shared feedback service only after an explicit submit action and must never include book files, names, library metadata, reading history, or fingerprints.
+- Imported book bytes, covers, reading history, annotations, and search indexes must not be uploaded to GitHub or any remote service. Ordinary reading never sends extracted text.
+- User-submitted feedback text may be sent to the shared feedback service only after an explicit submit action and must never include book files, names, library metadata, reading history, or fingerprints.
+- Local development translation testing is an additional explicit network exception: after an in-session disclosure and confirmation, only the current paragraph or same-paragraph selection that the user individually asks to translate may be sent through the loopback-only development proxy to the configured DeepSeek API. It must not send files, book names, book IDs, fingerprints, reading positions, adjacent paragraphs, or automatic full-document batches. GitHub Pages must not expose the proxy or remote-translation controls.
 - GitHub Pages hosts only the static application. GitHub Actions is CI/CD, not an application server or persistent VPS.
 - The first supported formats are DRM-free EPUB, PDF, TXT, and Markdown-as-text. DRM circumvention is out of scope.
 - Accounts, cloud storage, telemetry, analytics, public sharing, OCR, server-side conversion, and third-party book metadata requests are not added without explicit approval as a major change.
@@ -38,20 +39,22 @@ This file applies to the WebReader repository. Cross-project strategy, Git/main 
 - `src/readers/`: isolated EPUB, PDF, and text rendering adapters.
 - `src/lib/preferences.ts`: validated migration from legacy reader preferences to the versioned preference model.
 - `src/lib/epubStyles.ts`: paired EPUB theme colors for body text, text surfaces, and code surfaces without recoloring publication media or removing CSS background images.
-- `src/lib/textDocument.ts`: paragraph offsets plus local Markdown/plain-text outline extraction.
+- `src/lib/textDocument.ts`: stable source ranges and structured TXT/Markdown blocks for local reading and development translation.
+- `src/lib/translation.ts`: bounded client protocol, versioned cache identities, and response validation for explicit translation units.
+- `dev/deepseekProxy.ts`: loopback-only, development-only DeepSeek proxy with fixed provider settings, request/rate/concurrency limits, cancellation, and no credential exposure.
 - `src/lib/pdfOutline.ts`: local PDF outline destination resolution.
 - `src/lib/pdfLayout.ts`: bounded continuous-PDF page windows, real page geometry, and stable page-relative scroll restoration.
 - `src/lib/wheelPager.ts`: one-turn-per-gesture mouse-wheel pagination with boundary eligibility for scrollable pages.
 - `src/lib/formats.ts`: file size, signature, extension, and MIME validation.
 - `src/lib/fingerprint.ts`: bounded content fingerprinting used for local duplicate detection.
-- `src/lib/storage.ts`: Dexie/IndexedDB repository for book metadata, source Blob, settings, and locators.
+- `src/lib/storage.ts`: Dexie/IndexedDB repository for book metadata, source Blob, settings, locators, and versioned translation cache.
 - `src/lib/i18n.ts`: Chinese/English interface strings and language selection.
 - `src/lib/feedback.ts`: explicit text-only feedback request to the shared Cloudflare feedback service.
 - `src/types/`: stable publication, locator, preference, and third-party adapter types.
 - `public/`: committed application icons and public static assets.
 - `dist/`: generated Vite/Pages artifact; never edit or commit.
 
-The stack is React, TypeScript, Vite, Dexie, foliate-js, PDF.js, Lucide, Vitest, Oxlint, and vite-plugin-pwa. EPUB, PDF, and text use separate reader adapters, capabilities, outline sources, and locator types. EPUB cleanup is idempotent so async initialization and React unmount cannot release the same renderer twice; the root error boundary keeps a local recovery path if a reader still fails unexpectedly. Reflowable EPUB/text support local typography and background preferences; fixed-layout EPUB/PDF do not expose typography controls. Source books and metadata are stored atomically in IndexedDB; Dexie version 2 adds a per-document `book | article` reading profile and migrates older records to `book` without changing source bytes or locators. The storage module remains the boundary for a future OPFS migration. Book mode supports wheel page turns using a gesture accumulator; Paper mode uses native vertical scrolling. Reflowable EPUB uses chapter-continuous Foliate scrolling, PDF uses a bounded window of Canvas pages with page-relative locators, and text remains a local scrolling document. TXT and Markdown imports are limited to 8 MB because they are decoded and rendered into browser memory and DOM. The Chinese/English UI defaults to Chinese and stores only the selected language locally. Explicit feedback submissions send text plus product/language labels to `https://feedback.070315.site/feedback`; no library context is attached.
+The stack is React, TypeScript, Vite, Dexie, foliate-js, PDF.js, Lucide, Vitest, Oxlint, and vite-plugin-pwa. EPUB, PDF, and text use separate reader adapters, capabilities, outline sources, and locator types. EPUB cleanup is idempotent so async initialization and React unmount cannot release the same renderer twice; the root error boundary keeps a local recovery path if a reader still fails unexpectedly. Reflowable EPUB/text support local typography and background preferences; fixed-layout EPUB/PDF do not expose typography controls. Source books and metadata are stored atomically in IndexedDB; Dexie version 2 adds a per-document `book | article` reading profile and migrates older records to `book` without changing source bytes or locators. The storage module remains the boundary for a future OPFS migration. Book mode supports wheel page turns using a gesture accumulator; Paper mode uses native vertical scrolling. Reflowable EPUB uses chapter-continuous Foliate scrolling, PDF uses a bounded window of Canvas pages with page-relative locators, and text remains a local scrolling document. TXT and Markdown imports are limited to 8 MB because they are decoded and rendered into browser memory and DOM. The Chinese/English UI defaults to Chinese and stores only the selected language locally. Explicit feedback submissions send text plus product/language labels to `https://feedback.070315.site/feedback`; no library context is attached. In local development only, TXT/Markdown Paper mode can create a shared-row bilingual view. After an in-session disclosure, each user command sends only the current paragraph or same-paragraph selection through the loopback development proxy to DeepSeek. Dexie version 3 caches validated translation results by full document revision, source range, target language, model, and prompt version; deleting a book cascades to its translations. The Pages build has no proxy or remote-translation controls, and production artifacts must not contain the provider URL or key environment-variable name.
 
 ### Commands
 
@@ -77,6 +80,10 @@ The service worker caches only the application shell. User book data belongs in 
 ## Storage And Privacy Invariants
 
 - An imported source Blob and its `BookRecord` are written in one IndexedDB transaction.
+- Translation cache records contain only source hashes/ranges, version identity, provider/model/prompt labels, target language, and translated text. API keys never enter browser storage, source, Git, build artifacts, or logs.
+- A translation cache write must verify its parent book still exists in the same transaction; deleting a book removes cached translations in the same transaction.
+- Local development remote translation requires an in-session disclosure and explicit per-unit commands. Only loopback, same-origin proxy requests are accepted; ordinary reading and GitHub Pages never send text to a model provider.
+- Translation selection must remain within one structured source block. Never silently expand a selection to adjacent blocks or include document/library metadata.
 - `BookRecord.id` is a random local identifier. The fingerprint is used only inside this browser for duplicate detection; never expose cross-user deduplication signals.
 - Deleting a book removes both metadata and source Blob. It never modifies the original file selected from the user's filesystem.
 - A locator is format-specific: EPUB CFI, PDF page index, or text progression. Do not replace it with a generic rendered page number.
@@ -89,7 +96,7 @@ The service worker caches only the application shell. User book data belongs in 
 - Do not trust extension or client MIME alone. Keep signature/container checks and explicit file/resource limits.
 - EPUB and other archive formats are untrusted active inputs. Keep the restrictive CSP, block scripted publication content, forms, remote resource requests, and automatic external navigation.
 - PDF.js must run parsing in its worker. Keep the app on the Canvas-only rendering path: do not create or import PDF scripting managers, sandboxes, or document JavaScript actions.
-- Do not add remote fonts, runtime CDNs, metadata APIs, cover fetches, link prefetching, or any network destination beyond the reviewed feedback endpoint without a privacy and CSP review.
+- Do not add remote fonts, runtime CDNs, metadata APIs, cover fetches, link prefetching, or any network destination beyond the reviewed feedback endpoint and the loopback-only development translation proxy without a privacy and CSP review.
 - Feedback requests must remain text-only, explicit, bounded to 2000 characters, and covered by client tests. Never attach book or library context. The shared service may retain connection metadata only for rate limiting, abuse prevention, and the protected feedback viewer.
 - A new format needs its own input validation, adapter, locator semantics, compatibility statement, malformed fixtures, and resource limits.
 - "Supported" means the project defines readable output, navigation, progress stability, failure behavior, and cleanup. Opening one sample is not sufficient.

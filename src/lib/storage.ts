@@ -1,5 +1,6 @@
 import Dexie, { type EntityTable } from "dexie";
 import type { BookRecord, ReaderPreferences, ReadingLocator, ReadingProfile } from "../types/library";
+import type { TranslationCacheRecord, TranslationTargetLanguage } from "../types/translation";
 import { normalizePreferences } from "./preferences";
 
 interface FileRecord {
@@ -16,6 +17,7 @@ class WebReaderDatabase extends Dexie {
   books!: EntityTable<BookRecord, "id">;
   files!: EntityTable<FileRecord, "bookId">;
   settings!: EntityTable<SettingRecord, "key">;
+  translations!: EntityTable<TranslationCacheRecord, "key">;
 
   constructor() {
     super("webreader");
@@ -32,6 +34,12 @@ class WebReaderDatabase extends Dexie {
       await transaction.table<BookRecord>("books").toCollection().modify((book) => {
         book.readingProfile = book.readingProfile === "article" ? "article" : "book";
       });
+    });
+    this.version(3).stores({
+      books: "id, &fingerprint, addedAt, updatedAt, format, readingProfile",
+      files: "bookId",
+      settings: "key",
+      translations: "&key, bookId, [bookId+documentRevision+targetLanguage], updatedAt",
     });
   }
 }
@@ -67,10 +75,32 @@ export async function updateReadingProfile(bookId: string, readingProfile: Readi
   await db.books.update(bookId, { readingProfile });
 }
 
+export async function getTranslation(key: string): Promise<TranslationCacheRecord | undefined> {
+  return db.translations.get(key);
+}
+
+export async function listTranslations(
+  bookId: string,
+  documentRevision: string,
+  targetLanguage: TranslationTargetLanguage,
+): Promise<TranslationCacheRecord[]> {
+  return db.translations.where("[bookId+documentRevision+targetLanguage]")
+    .equals([bookId, documentRevision, targetLanguage]).toArray();
+}
+
+export async function putTranslation(record: TranslationCacheRecord): Promise<boolean> {
+  return db.transaction("rw", db.books, db.translations, async () => {
+    if (!await db.books.get(record.bookId)) return false;
+    await db.translations.put(record);
+    return true;
+  });
+}
+
 export async function removeBook(bookId: string): Promise<void> {
-  await db.transaction("rw", db.books, db.files, async () => {
+  await db.transaction("rw", db.books, db.files, db.translations, async () => {
     await db.books.delete(bookId);
     await db.files.delete(bookId);
+    await db.translations.where("bookId").equals(bookId).delete();
   });
 }
 

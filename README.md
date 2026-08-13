@@ -19,7 +19,7 @@ Production: https://FIERsity.github.io/WebReader/
 - Installable PWA application shell
 - Fully static GitHub Pages deployment
 
-Books, extracted content, reading progress, and preferences remain in the current browser. Clearing site data can remove the local library. PWA installation is not a backup. The only runtime network exception is feedback text that the user explicitly submits; WebReader does not attach book names, files, library metadata, fingerprints, or reading history.
+Books, extracted content, reading progress, and preferences remain in the current browser during ordinary reading. Clearing site data can remove the local library. PWA installation is not a backup. Explicit feedback sends only the text the user submits. Local development builds have an additional experimental translation path: after an in-session disclosure and confirmation, only the current TXT/Markdown paragraph or a same-paragraph selection that the user individually requests is sent through a loopback-only proxy to DeepSeek. The file, title, book ID, fingerprint, reading position, and adjacent paragraphs are not sent. GitHub Pages does not include the proxy or remote-translation controls.
 
 ## Development
 
@@ -34,6 +34,18 @@ npm run preview
 
 `npm run check` runs unit tests, lint, TypeScript, and the production build.
 
+### Local Translation Experiment
+
+Remote translation is available only from `npm run dev`. Start the development server with a temporary process environment variable:
+
+```bash
+DEEPSEEK_API_KEY="..." npm run dev
+```
+
+Do not put the key in a `VITE_*` variable, source file, `.env` file, browser storage, or Git. The development proxy accepts only loopback, same-origin requests, uses fixed provider/model/prompt settings, limits request size/rate/concurrency, and does not expose upstream response details. Each translation still requires the user to enable the disclosed session and click a paragraph-level command. Translations are cached locally by document revision, source range, language, model, and prompt version; deleting the source document also deletes its cached translations.
+
+Production builds intentionally contain no DeepSeek endpoint or API-key variable name, and Pages has no translation endpoint.
+
 ## Deployment
 
 Pushes to `main` run checks and publish `dist/` through GitHub Actions to GitHub Pages. GitHub Actions is used only for CI/CD; the application has no server process.
@@ -44,6 +56,7 @@ The production build uses relative paths so application chunks, PDF workers, the
 
 - No accounts, analytics, telemetry, cloud storage, runtime CDN, or remote metadata lookups
 - Feedback is an explicit text-only request to `feedback.070315.site`, limited to 2000 characters. The service retains necessary connection details for rate limiting and abuse prevention; do not include sensitive information
+- Local development translation is a separate opt-in exception with an in-session disclosure. It sends only the paragraph or same-paragraph selection explicitly requested by the user to DeepSeek through a loopback-only proxy; ordinary reading and the Pages build send no text to a model provider
 - Source books are stored in browser IndexedDB and never included in GitHub artifacts
 - EPUB scripted content and external network access are blocked by Content Security Policy
 - PDF files use the worker-backed Canvas rendering path. Continuous mode mounts only a bounded page window, and WebReader does not create PDF scripting managers, sandboxes, or run document JavaScript actions

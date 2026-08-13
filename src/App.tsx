@@ -409,6 +409,7 @@ export default function App() {
               )}
               {activeBook.format === "txt" && (
                 <TextReader
+                  bookId={activeBook.id}
                   readingProfile={activeBook.readingProfile}
                   file={activeFile}
                   fileName={activeBook.fileName}
