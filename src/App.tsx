@@ -395,6 +395,7 @@ export default function App() {
               )}
               {activeBook.format === "pdf" && (
                 <PdfReader
+                  bookId={activeBook.id}
                   readingProfile={activeBook.readingProfile}
                   file={activeFile}
                   locator={activeBook.locator}

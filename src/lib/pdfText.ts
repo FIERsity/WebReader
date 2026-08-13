@@ -1,7 +1,8 @@
-export const PDF_TEXT_ALGORITHM_VERSION = 1;
+export const PDF_TEXT_ALGORITHM_VERSION = 2;
 export const MAX_PDF_ANALYSIS_PAGES = 300;
 export const MAX_PDF_TEXT_ITEMS_PER_PAGE = 20_000;
 export const MAX_PDF_ANALYSIS_CHARACTERS = 2_000_000;
+export const MAX_PDF_BLOCK_CHARACTERS = 6_000;
 
 export type PdfPaperBlockKind =
   | "title"
@@ -24,6 +25,7 @@ export type PdfPageIssue =
   | "ambiguous-columns";
 
 export interface PdfRawTextItem {
+  sourceIndex?: number;
   str: string;
   dir: string;
   transform: readonly number[];
@@ -45,6 +47,11 @@ export interface PdfPaperFragment extends PdfNormalizedRect {
   page: number;
 }
 
+export interface PdfPaperSourceItem {
+  page: number;
+  index: number;
+}
+
 export interface PdfPaperBlock {
   id: string;
   kind: PdfPaperBlockKind;
@@ -52,6 +59,7 @@ export interface PdfPaperBlock {
   readingOrder: number;
   column: "left" | "right" | "span";
   fragments: PdfPaperFragment[];
+  sourceItems: PdfPaperSourceItem[];
   confidence: number;
 }
 
@@ -79,12 +87,14 @@ export interface PdfPaperDocument {
 }
 
 interface NormalizedItem extends PdfNormalizedRect {
+  sourceIndex: number;
   text: string;
   fontHeight: number;
   vertical: boolean;
 }
 
 interface TextLine extends PdfNormalizedRect {
+  sourceItemIndexes: number[];
   text: string;
   fontHeight: number;
   column: PdfPaperBlock["column"];
@@ -131,7 +141,7 @@ function normalizeExtractedText(value: string): string {
   return text;
 }
 
-function normalizeItem(item: PdfRawTextItem, pageWidth: number, pageHeight: number): NormalizedItem | undefined {
+function normalizeItem(item: PdfRawTextItem, sourceIndex: number, pageWidth: number, pageHeight: number): NormalizedItem | undefined {
   const text = normalizeExtractedText(item.str);
   if (!text || item.transform.length < 6 || pageWidth <= 0 || pageHeight <= 0) return undefined;
   const [a = 0, b = 0, c = 0, d = 0, x = 0, baseline = 0] = item.transform;
@@ -143,6 +153,7 @@ function normalizeItem(item: PdfRawTextItem, pageWidth: number, pageHeight: numb
     ? clamp((baseline - fontHeight) / pageHeight)
     : clamp((pageHeight - baseline - fontHeight) / pageHeight);
   return {
+    sourceIndex,
     text,
     left: clamp(x / pageWidth),
     top,
@@ -200,7 +211,13 @@ function buildLines(items: NormalizedItem[]): TextLine[] {
         previous = item;
       }
       const rect = rectUnion(group);
-      lines.push({ ...rect, text: text.trim(), fontHeight: median(group.map((item) => item.fontHeight)), column: "span" });
+      lines.push({
+        ...rect,
+        sourceItemIndexes: group.map((item) => item.sourceIndex),
+        text: text.trim(),
+        fontHeight: median(group.map((item) => item.fontHeight)),
+        column: "span",
+      });
     }
   }
   return lines.filter((line) => line.text.length > 0);
@@ -272,9 +289,15 @@ function isHeadingLike(kind: PdfPaperBlockKind): boolean {
 
 function linesToBlocks(lines: TextLine[], page: number, medianHeight: number): PdfPaperBlock[] {
   const groups: Array<{ kind: PdfPaperBlockKind; lines: TextLine[] }> = [];
+  let inReferences = false;
   for (let index = 0; index < lines.length; index += 1) {
     const line = lines[index]!;
-    const kind = lineKind(line, medianHeight, index);
+    let kind = lineKind(line, medianHeight, index);
+  if (kind === "heading" && /^(?:\d+(?:\.\d+)*\s+)?(?:references|bibliography|参考文献)\b/iu.test(line.text.trim())) inReferences = true;
+    else if (/^(?:references|bibliography|参考文献)\b/iu.test(line.text.trim())) {
+      kind = "heading";
+      inReferences = true;
+    } else if (inReferences && kind !== "heading" && kind !== "equation" && kind !== "caption") kind = "reference";
     const previousGroup = groups.at(-1);
     const previous = previousGroup?.lines.at(-1);
     const gap = previous ? line.top - previous.top - previous.height : Number.POSITIVE_INFINITY;
@@ -293,7 +316,24 @@ function linesToBlocks(lines: TextLine[], page: number, medianHeight: number): P
     } else groups.push({ kind, lines: [line] });
   }
 
-  return groups.map((group, index) => {
+  const boundedGroups = groups.flatMap((group) => {
+    const output: Array<{ kind: PdfPaperBlockKind; lines: TextLine[] }> = [];
+    let current: TextLine[] = [];
+    let characters = 0;
+    for (const line of group.lines) {
+      if (current.length > 0 && characters + line.text.length > MAX_PDF_BLOCK_CHARACTERS) {
+        output.push({ kind: group.kind, lines: current });
+        current = [];
+        characters = 0;
+      }
+      current.push(line);
+      characters += line.text.length;
+    }
+    if (current.length > 0) output.push({ kind: group.kind, lines: current });
+    return output;
+  });
+
+  return boundedGroups.map((group, index) => {
     const rect = rectUnion(group.lines);
     const text = blockText(group.lines);
     const column = group.lines[0]?.column ?? "span";
@@ -305,6 +345,7 @@ function linesToBlocks(lines: TextLine[], page: number, medianHeight: number): P
       readingOrder: index,
       column,
       fragments: [{ page, ...rect }],
+      sourceItems: [...new Set(group.lines.flatMap((line) => line.sourceItemIndexes))].map((sourceIndex) => ({ page, index: sourceIndex })),
       confidence: 1,
     };
   });
@@ -329,7 +370,7 @@ export function analyzePdfTextPage(input: {
       sourceItemCount: input.items.length, characterCount: 0, blocks: [],
     };
   }
-  const items = input.items.map((item) => normalizeItem(item, width, height)).filter((item): item is NormalizedItem => Boolean(item));
+  const items = input.items.map((item, index) => normalizeItem(item, item.sourceIndex ?? index, width, height)).filter((item): item is NormalizedItem => Boolean(item));
   const verticalCount = items.filter((item) => item.vertical).length;
   const lines = buildLines(items);
   const bodyLineHeights = lines.filter((line) => line.top >= 0.08 && line.top + line.height <= 0.92).map((line) => line.fontHeight);
@@ -352,7 +393,7 @@ export function analyzePdfTextPage(input: {
   const spanningTransitions = blocks.filter((block) => block.column === "span" && block.fragments[0]!.top > 0.08 && block.fragments[0]!.top < 0.9).length;
   if (columnCount === 2 && spanningTransitions > 2) issues.push("ambiguous-columns");
   const rejected = characterCount < 40 || verticalCount / Math.max(1, items.length) > 0.25
-    || formulaCharacters / Math.max(1, characterCount) > 0.55 || issues.includes("invalid-text-layer");
+    || issues.includes("invalid-text-layer");
   const confidence = clamp(1 - (characterCount < 100 ? 0.25 : 0) - verticalCount / Math.max(1, items.length) - formulaCharacters / Math.max(1, characterCount) * 0.35 - (issues.includes("ambiguous-columns") ? 0.2 : 0));
   return {
     page, width, height, quality: rejected ? "rejected" : issues.length > 0 ? "review" : "supported",
@@ -380,6 +421,7 @@ function mergeCrossPageBlocks(blocks: PdfPaperBlock[]): PdfPaperBlock[] {
         id: `pdfb_${stableHash(`${previous.id}|${block.id}|${text}`)}`,
         text,
         fragments: [...previous.fragments, ...block.fragments],
+        sourceItems: [...previous.sourceItems, ...block.sourceItems],
         confidence: Math.min(previous.confidence, block.confidence),
       };
     } else merged.push(block);
@@ -404,13 +446,11 @@ export function buildPdfPaperDocument(pages: PdfAnalyzedPage[]): PdfPaperDocumen
     const signature = marginalSignature(block);
     return !signature || !recurring.has(signature);
   }))).map((block, index) => ({ ...block, readingOrder: index }));
-  const supportedPages = new Set(orderedPages.filter((page) => page.quality === "supported").map((page) => page.page));
   return {
     algorithmVersion: PDF_TEXT_ALGORITHM_VERSION,
     pages: orderedPages,
     blocks,
-    translatedBlockCount: blocks.filter((block) => block.kind !== "equation" && block.kind !== "reference"
-      && block.fragments.every((fragment) => supportedPages.has(fragment.page))).length,
+    translatedBlockCount: blocks.filter((block) => block.kind !== "equation" && block.kind !== "reference").length,
     rejectedPages: orderedPages.filter((page) => page.quality === "rejected").map((page) => page.page),
     reviewPages: orderedPages.filter((page) => page.quality === "review").map((page) => page.page),
     characterCount: blocks.reduce((total, block) => total + block.text.length, 0),

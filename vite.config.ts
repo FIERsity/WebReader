@@ -1,10 +1,19 @@
 import { defineConfig } from "vitest/config";
+import { resolve } from "node:path";
 import react from "@vitejs/plugin-react";
 import { VitePWA } from "vite-plugin-pwa";
 import { deepSeekProxyPlugin } from "./dev/deepseekProxy.js";
 
 export default defineConfig({
   base: "./",
+  build: {
+    rollupOptions: {
+      input: {
+        index: resolve(import.meta.dirname, "index.html"),
+        translator: resolve(import.meta.dirname, "translator.html"),
+      },
+    },
+  },
   plugins: [
     deepSeekProxyPlugin(),
     react(),

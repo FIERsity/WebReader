@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
-  analyzePdfTextPage, buildPdfPaperDocument, type PdfRawTextItem,
+  analyzePdfTextPage, buildPdfPaperDocument, MAX_PDF_BLOCK_CHARACTERS, type PdfRawTextItem,
 } from "./pdfText";
 
 const PAGE_WIDTH = 600;
@@ -164,13 +164,35 @@ describe("PDF paper text analysis", () => {
     expect(shifted.blocks.find((block) => block.text === base.blocks[0]?.text)?.id).toBe(base.blocks[0]?.id);
   });
 
-  it("marks over-fragmented pages for review", () => {
+  it("keeps over-fragmented pages translatable as conservative small blocks", () => {
     const items = Array.from({ length: 84 }, (_, index) => item(`Fragment ${index} with enough text.`, 60, 20 + index * 8, 240));
     const page = analyzePdfTextPage({ page: 7, width: PAGE_WIDTH, height: PAGE_HEIGHT, items });
     expect(page.quality).toBe("review");
     expect(page.issues).toContain("over-fragmented");
     const document = buildPdfPaperDocument([page]);
-    expect(document.translatedBlockCount).toBe(0);
+    expect(document.translatedBlockCount).toBe(page.blocks.length);
+  });
+
+  it("marks bibliography entries as references and excludes them from translation", () => {
+    const page = analyzePdfTextPage({
+      page: 8,
+      width: PAGE_WIDTH,
+      height: PAGE_HEIGHT,
+      items: [
+        item("References", 70, 80, 180, 18),
+        ...paragraph("1. Author A. A reproducible study. Journal 12, 34-40 (2024).", 70, 125, 420),
+        ...paragraph("2. Author B. Another paper. https://doi.org/10.1000/example", 70, 180, 420),
+      ],
+    });
+    expect(page.blocks.slice(1).every((block) => block.kind === "reference")).toBe(true);
+    expect(buildPdfPaperDocument([page]).translatedBlockCount).toBe(1);
+  });
+
+  it("splits anomalously long paragraphs at line boundaries before batching", () => {
+    const lines = Array.from({ length: 80 }, (_, index) => item(`Line ${index} ${"word ".repeat(20)}`, 70, 40 + index * 8, 420));
+    const page = analyzePdfTextPage({ page: 9, width: PAGE_WIDTH, height: 1_200, items: lines });
+    expect(page.blocks.length).toBeGreaterThan(1);
+    expect(page.blocks.every((block) => block.text.length <= MAX_PDF_BLOCK_CHARACTERS + 200)).toBe(true);
   });
 
   it("removes recurring marginal headers and merges cross-page soft hyphenation", () => {
