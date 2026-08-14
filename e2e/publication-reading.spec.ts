@@ -23,6 +23,11 @@ test("opens a synthetic EPUB and keeps it readable across mode changes", async (
 });
 
 test("opens a synthetic PDF and preserves its page across mode changes", async ({ page }) => {
+  const browserErrors: string[] = [];
+  page.on("console", (message) => {
+    if (message.type() === "error") browserErrors.push(message.text());
+  });
+  page.on("pageerror", (error) => browserErrors.push(error.message));
   await page.goto("/");
   await page.locator('input[type="file"]').setInputFiles({
     name: "synthetic.pdf",
@@ -44,6 +49,7 @@ test("opens a synthetic PDF and preserves its page across mode changes", async (
   await page.getByRole("button", { name: "翻页" }).click();
   await expect(page.locator(".pdf-page-surface")).toBeVisible();
   await expect(page.getByText("无法渲染此 PDF 页面。")).toHaveCount(0);
+  expect(browserErrors).toEqual([]);
 });
 
 test("serves an installable application shell without caching imported books", async ({ page }) => {

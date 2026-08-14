@@ -68,7 +68,7 @@ The stack is React, TypeScript, Vite, Dexie, foliate-js, PDF.js, Lucide, Vitest,
 - Lint: `npm run lint`
 - Type-check and build: `npm run build`
 - Full minimum validation: `npm run check`
-- Desktop production E2E: `npm run test:e2e` (or `PLAYWRIGHT_USE_SYSTEM_CHROME=1 npm run test:e2e` when using an installed Chrome)
+- Desktop production E2E: `npm run test:e2e` (requires Chrome; install with `npx playwright install chrome` when unavailable)
 - Preview production build: `npm run preview`
 
 File import, IndexedDB migration, PWA, EPUB/PDF rendering, worker URL, CSP, page navigation, or visual changes also require `npm run test:e2e` plus a focused desktop browser check when the affected behavior is not covered by the synthetic suite.

@@ -40,7 +40,7 @@ npm run preview
 ```
 
 `npm run check` runs unit tests, lint, TypeScript, and the production build.
-`npm run test:e2e` builds the production application and exercises synthetic EPUB/PDF/text import, navigation, progress restoration, and PWA cache privacy in Chromium. Install its browser once with `npx playwright install chromium`; use `PLAYWRIGHT_USE_SYSTEM_CHROME=1 npm run test:e2e` to run against a local Chrome installation.
+`npm run test:e2e` builds the production application and exercises synthetic EPUB/PDF/text import, navigation, progress restoration, and PWA cache privacy in Chrome. Install Chrome once with `npx playwright install chrome` when it is not already available.
 
 ### Local Paper Reflow
 
