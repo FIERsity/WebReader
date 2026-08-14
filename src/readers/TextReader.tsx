@@ -1,5 +1,11 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import type { ReactNode } from "react";
 import type { TranslationKey, TranslationVariables } from "../lib/i18n";
+import {
+  parseMarkdownBlock,
+  type MarkdownBlock,
+  type MarkdownInlineNode,
+} from "../lib/markdownDocument";
 import { extractMarkdownOutline, extractTextOutline, splitTextBlocks } from "../lib/textDocument";
 import {
   calculateTextPageLayout,
@@ -50,25 +56,148 @@ async function decodeText(file: Blob): Promise<string> {
   }
 }
 
-function textNodeFor(element: HTMLElement): Text | undefined {
-  const node = element.firstChild;
-  return node?.nodeType === Node.TEXT_NODE ? node as Text : undefined;
-}
-
 function rangeRectAtOffset(element: HTMLElement, offset: number): DOMRect | undefined {
-  const textNode = textNodeFor(element);
-  if (!textNode?.length) return undefined;
-  const localOffset = Math.min(textNode.length, Math.max(0, offset));
+  const candidates = [...element.querySelectorAll<HTMLElement>("[data-source-start][data-source-end]")]
+    .map((node) => ({
+      node,
+      start: Number(node.dataset.sourceStart),
+      end: Number(node.dataset.sourceEnd),
+    }))
+    .filter(({ start, end }) => Number.isFinite(start) && Number.isFinite(end) && end >= start);
+  const mapped = candidates.find(({ start, end }) => offset >= start && offset < end)
+    ?? candidates.find(({ end }) => offset === end)
+    ?? candidates.reduce<{ node: HTMLElement; start: number; end: number } | undefined>((closest, candidate) => {
+      if (!closest) return candidate;
+      const candidateDistance = offset < candidate.start ? candidate.start - offset : offset - candidate.end;
+      const closestDistance = offset < closest.start ? closest.start - offset : offset - closest.end;
+      return candidateDistance < closestDistance ? candidate : closest;
+    }, undefined);
+  const root = mapped?.node ?? element;
+  const walker = element.ownerDocument.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+  const textNodes: Text[] = [];
+  let current: Node | null;
+  while ((current = walker.nextNode())) {
+    if (current.nodeType === Node.TEXT_NODE && (current.textContent?.length ?? 0) > 0) textNodes.push(current as Text);
+  }
+  if (textNodes.length === 0) return undefined;
+  const totalLength = textNodes.reduce((length, node) => length + node.length, 0);
+  const sourceLength = mapped ? mapped.end - mapped.start : totalLength;
+  const localOffset = mapped && sourceLength === totalLength
+    ? Math.min(totalLength, Math.max(0, offset - mapped.start))
+    : offset <= (mapped?.start ?? offset) ? 0 : totalLength;
+  let remaining = localOffset;
+  let textNode = textNodes[0]!;
+  for (const node of textNodes) {
+    if (remaining <= node.length) {
+      textNode = node;
+      break;
+    }
+    remaining -= node.length;
+    textNode = node;
+  }
   const range = textNode.ownerDocument.createRange();
-  if (localOffset < textNode.length) {
-    range.setStart(textNode, localOffset);
-    range.setEnd(textNode, localOffset + 1);
+  const localTextOffset = Math.min(textNode.length, Math.max(0, remaining));
+  if (localTextOffset < textNode.length) {
+    range.setStart(textNode, localTextOffset);
+    range.setEnd(textNode, localTextOffset + 1);
   } else {
     range.setStart(textNode, textNode.length - 1);
     range.setEnd(textNode, textNode.length);
   }
   const rects = [...range.getClientRects()].filter((rect) => rect.width > 0 || rect.height > 0);
-  return localOffset < textNode.length ? rects[0] : rects.at(-1);
+  return localTextOffset < textNode.length ? rects[0] : rects.at(-1);
+}
+
+type ActiveTextMatch = { start: number; end: number };
+
+function renderSourceText(text: string, start: number, end: number, activeMatch?: ActiveTextMatch): ReactNode {
+  if (!text) return null;
+  const sourceLength = Math.max(0, end - start);
+  const exactMapping = sourceLength === text.length;
+  const overlapStart = activeMatch && exactMapping ? Math.max(start, activeMatch.start) : end;
+  const overlapEnd = activeMatch && exactMapping ? Math.min(end, activeMatch.end) : start;
+  const hasMatch = overlapStart < overlapEnd;
+  if (!hasMatch) {
+    return <span data-source-start={start} data-source-end={end}>{text}</span>;
+  }
+  const localStart = overlapStart - start;
+  const localEnd = overlapEnd - start;
+  return (
+    <span data-source-start={start} data-source-end={end}>
+      {text.slice(0, localStart)}
+      <mark className="text-search-highlight">{text.slice(localStart, localEnd)}</mark>
+      {text.slice(localEnd)}
+    </span>
+  );
+}
+
+function renderMarkdownInline(nodes: MarkdownInlineNode[], activeMatch?: ActiveTextMatch): ReactNode[] {
+  return nodes.map((node) => {
+    const key = `${node.type}:${node.start}:${node.end}`;
+    if (node.type === "text" || node.type === "code") {
+      return <span className={node.type === "code" ? "markdown-inline-code" : undefined} key={key}>{renderSourceText(node.text, node.start, node.end, activeMatch)}</span>;
+    }
+    if (node.type === "strong") return <strong key={key}>{renderMarkdownInline(node.children, activeMatch)}</strong>;
+    if (node.type === "emphasis") return <em key={key}>{renderMarkdownInline(node.children, activeMatch)}</em>;
+    if (node.type === "delete") return <del key={key}>{renderMarkdownInline(node.children, activeMatch)}</del>;
+    if (node.type === "link") {
+      return <span className="markdown-link" key={key} title={node.href}>{renderMarkdownInline(node.children, activeMatch)}</span>;
+    }
+    if (node.type === "image") {
+      return <span className="markdown-image-alt" key={key} aria-label={node.alt || "Image"}>{renderSourceText(node.alt || "Image", node.altStart, node.altEnd, activeMatch)}</span>;
+    }
+    return <br key={key} aria-hidden="true" />;
+  });
+}
+
+interface MarkdownBlockViewProps {
+  block: MarkdownBlock;
+  activeMatch?: ActiveTextMatch;
+  paragraphIndent: ReaderPreferences["paragraphIndent"];
+  register: (node: HTMLElement | null) => void;
+}
+
+function MarkdownBlockView({ block, activeMatch, paragraphIndent, register }: MarkdownBlockViewProps) {
+  const inline = block.inlineNodes ?? [];
+  if (block.markdownKind === "heading") {
+    const content = renderMarkdownInline(inline, activeMatch);
+    if (block.headingLevel === 1) return <h1 ref={register} className="markdown-heading" key={block.id}>{content}</h1>;
+    if (block.headingLevel === 2) return <h2 ref={register} className="markdown-heading" key={block.id}>{content}</h2>;
+    if (block.headingLevel === 3) return <h3 ref={register} className="markdown-heading" key={block.id}>{content}</h3>;
+    if (block.headingLevel === 4) return <h4 ref={register} className="markdown-heading" key={block.id}>{content}</h4>;
+    if (block.headingLevel === 5) return <h5 ref={register} className="markdown-heading" key={block.id}>{content}</h5>;
+    return <h6 ref={register} className="markdown-heading" key={block.id}>{content}</h6>;
+  }
+  if (block.markdownKind === "code") {
+    const code = renderSourceText(block.codeText ?? "", block.codeStart ?? block.start, block.codeEnd ?? block.end, activeMatch);
+    return <pre ref={register} className="markdown-code" key={block.id} data-language={block.codeLanguage}><code>{code}</code></pre>;
+  }
+  if (block.markdownKind === "list") {
+    const List = block.orderedList ? "ol" : "ul";
+    return (
+      <List ref={register} className="markdown-list" key={block.id}>
+        {(block.listItems ?? []).map((item) => (
+          <li key={`${block.id}:${item.start}`} style={{ marginInlineStart: `${item.depth * 1.25}em` }}>
+            {item.lines.map((line, index) => (
+              <span className="markdown-list-line" key={`${item.start}:${index}`}>
+                {index > 0 && <br />}
+                {renderMarkdownInline(line, activeMatch)}
+              </span>
+            ))}
+          </li>
+        ))}
+      </List>
+    );
+  }
+  if (block.markdownKind === "quote") {
+    return (
+      <blockquote ref={register} className="markdown-quote" key={block.id}>
+        {(block.quoteLines ?? []).map((line, index) => <p key={`${block.id}:${index}`}>{renderMarkdownInline(line, activeMatch)}</p>)}
+      </blockquote>
+    );
+  }
+  if (block.markdownKind === "thematic-break") return <hr ref={register} className="markdown-rule" key={block.id} />;
+  return <p ref={register} className="markdown-paragraph" key={block.id} style={{ textIndent: paragraphIndent ? `${paragraphIndent}em` : undefined }}>{renderMarkdownInline(inline, activeMatch)}</p>;
 }
 
 function samePageLayout(left: TextPageLayout | undefined, right: TextPageLayout): boolean {
@@ -101,10 +230,13 @@ export function TextReader({
   const [pageLayout, setPageLayout] = useState<TextPageLayout>();
   const [pageTrackWidth, setPageTrackWidth] = useState(0);
   const [activeSearchMatch, setActiveSearchMatch] = useState<{ start: number; end: number }>();
-  const blocks = useMemo(() => splitTextBlocks(text), [text]);
   const hasReadableText = text.trim().length > 0;
   const markdown = mediaType === "text/markdown" || /\.md$/i.test(fileName);
   const paginated = readingProfile === "book";
+  const blocks = useMemo(() => {
+    const parsed = splitTextBlocks(text);
+    return markdown ? parsed.map(parseMarkdownBlock) : parsed;
+  }, [markdown, text]);
 
   useEffect(() => {
     let active = true;
@@ -410,20 +542,17 @@ export function TextReader({
       {paginated && pageTrackWidth > 0 && <span className="text-page-track" aria-hidden="true" style={{ width: `${pageTrackWidth}px` }} />}
       <article ref={articleRef} style={articleStyle}>
         {hasReadableText ? blocks.map((block) => {
-          const matchStart = activeSearchMatch ? Math.max(block.start, activeSearchMatch.start) : block.end;
-          const matchEnd = activeSearchMatch ? Math.min(block.end, activeSearchMatch.end) : block.start;
-          const hasMatch = matchStart < matchEnd;
-          const localStart = Math.max(0, matchStart - block.start);
-          const localEnd = Math.max(localStart, matchEnd - block.start);
-          return (
-          <p
-            key={block.id}
-            ref={(node) => { if (node) blocksRef.current.set(block.start, node); else blocksRef.current.delete(block.start); }}
-            style={{ textIndent: preferences.paragraphIndent ? `${preferences.paragraphIndent}em` : undefined }}
-          >
-            {hasMatch ? <>{block.text.slice(0, localStart)}<mark className="text-search-highlight">{block.text.slice(localStart, localEnd)}</mark>{block.text.slice(localEnd)}</> : block.text}
-          </p>
-          );
+          const register = (node: HTMLElement | null) => {
+            if (node) blocksRef.current.set(block.start, node);
+            else blocksRef.current.delete(block.start);
+          };
+          const activeMatch = activeSearchMatch && activeSearchMatch.start < block.end && activeSearchMatch.end > block.start
+            ? activeSearchMatch
+            : undefined;
+          if (markdown && "markdownKind" in block) {
+            return <MarkdownBlockView key={block.id} block={block as MarkdownBlock} activeMatch={activeMatch} paragraphIndent={preferences.paragraphIndent} register={register} />;
+          }
+          return <p key={block.id} ref={register} style={{ textIndent: preferences.paragraphIndent ? `${preferences.paragraphIndent}em` : undefined }}>{renderSourceText(block.text, block.start, block.end, activeMatch)}</p>;
         }) : loaded ? t("emptyText") : t("loadingText")}
       </article>
     </div>

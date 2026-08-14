@@ -2,6 +2,7 @@ import { expect, test } from "@playwright/test";
 import path from "node:path";
 
 const fixture = path.join(import.meta.dirname, "fixtures", "long-reader.md");
+const renderingFixture = path.join(import.meta.dirname, "fixtures", "markdown-rendering.md");
 const emptyFixture = path.join(import.meta.dirname, "fixtures", "empty-reader.txt");
 const invalidEpubFixture = path.join(import.meta.dirname, "fixtures", "invalid.epub");
 
@@ -74,5 +75,26 @@ test("searches Markdown locally, jumps to the match, and clears the highlight", 
   await expect(page.locator(".text-search-highlight")).toHaveText("横向移动恰好一个阅读区域");
   await page.getByRole("button", { name: "关闭书内搜索" }).click();
   await expect(page.locator(".text-search-highlight")).toHaveCount(0);
+  expect(unexpectedRequests).toEqual([]);
+});
+
+test("renders safe Markdown blocks without executing raw HTML or unsafe links", async ({ page }) => {
+  const unexpectedRequests: string[] = [];
+  page.on("request", (request) => {
+    const url = new URL(request.url());
+    if (url.origin !== "http://127.0.0.1:4175") unexpectedRequests.push(request.url());
+  });
+  await page.goto("/");
+  await page.locator('input[type="file"]').setInputFiles(renderingFixture);
+  await page.getByRole("button", { name: "打开《markdown rendering》" }).click();
+
+  await expect(page.locator(".markdown-heading").first()).toHaveText("Markdown 渲染演示");
+  await expect(page.locator(".markdown-paragraph strong")).toHaveText("安全粗体");
+  await expect(page.locator(".markdown-list li")).toHaveCount(2);
+  await expect(page.locator(".markdown-quote")).toContainText("这是一个引用段落");
+  await expect(page.locator(".markdown-code code")).toContainText("localOnly = true");
+  await expect(page.locator(".text-stage script")).toHaveCount(0);
+  await expect(page.locator('a[href^="javascript:"]')).toHaveCount(0);
+  await expect(page.getByText('<script>alert("blocked")</script>')).toBeVisible();
   expect(unexpectedRequests).toEqual([]);
 });

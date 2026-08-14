@@ -282,6 +282,26 @@ h2 { margin: 0; font-size: 20px; }
   column-width: var(--text-content-width); column-gap: calc(var(--text-page-side-inset) * 2); column-fill: auto;
 }
 .text-stage article p { margin: 0 0 1em; white-space: pre-wrap; }
+.text-stage article .markdown-paragraph { white-space: pre-wrap; }
+.text-stage article .markdown-heading { margin: 0 0 .65em; line-height: 1.25; break-after: avoid; white-space: pre-wrap; }
+.text-stage article h1.markdown-heading { font-size: 1.8em; }
+.text-stage article h2.markdown-heading { font-size: 1.5em; }
+.text-stage article h3.markdown-heading { font-size: 1.28em; }
+.text-stage article h4.markdown-heading, .text-stage article h5.markdown-heading, .text-stage article h6.markdown-heading { font-size: 1.1em; }
+.text-stage article .markdown-list { margin: 0 0 1em; padding-inline-start: 1.6em; break-inside: avoid; }
+.text-stage article .markdown-list li { margin-block: .28em; white-space: pre-wrap; }
+.text-stage article .markdown-list-line { display: inline; }
+.text-stage article .markdown-quote { margin: 0 0 1em; padding: .35em 1em; border-inline-start: 3px solid rgba(23,107,87,.45); color: color-mix(in srgb, currentColor 82%, #687068); break-inside: avoid; }
+.text-stage article .markdown-quote p { margin: 0 0 .65em; }
+.text-stage article .markdown-quote p:last-child { margin-bottom: 0; }
+.text-stage article .markdown-code { margin: 0 0 1em; padding: .85em 1em; overflow-wrap: anywhere; white-space: pre-wrap; border: 1px solid rgba(108,113,105,.2); border-radius: 5px; color: inherit; background: rgba(108,113,105,.08); font: .88em/1.55 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; break-inside: avoid; }
+.text-stage article .markdown-inline-code { padding: .08em .28em; border-radius: 3px; background: rgba(108,113,105,.12); font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: .9em; }
+.text-stage article .markdown-rule { margin: 1.3em 0; border: 0; border-top: 1px solid rgba(108,113,105,.34); }
+.text-stage article .markdown-link { color: var(--green-dark); text-decoration: underline; text-decoration-thickness: .08em; text-underline-offset: .15em; }
+.text-stage article .markdown-image-alt { color: var(--green-dark); font-style: italic; }
+.theme-night .text-stage article .markdown-quote { border-color: rgba(157,208,191,.55); color: #c4cbc3; }
+.theme-night .text-stage article .markdown-code { border-color: rgba(229,232,226,.18); background: rgba(229,232,226,.08); }
+.theme-night .text-stage article .markdown-link, .theme-night .text-stage article .markdown-image-alt { color: #b6e1d3; }
 .text-page-track { position: absolute; inset: 0 auto 0 0; pointer-events: none; }
 .spin { animation: reader-spin 1s linear infinite; }
 @keyframes reader-spin { to { transform: rotate(360deg); } }

@@ -11,7 +11,7 @@ Production: https://FIERsity.github.io/WebReader/
 - PDF rendering with PDF.js, selectable text over the authoritative Canvas, document outlines, page progress, and windowed continuous scrolling
 - Local PDF article reflow for text-layer papers, with deterministic single-column reading order, per-page diagnostics, and a side-by-side proof view
 - Stable source-block mapping between reflowed text and the authoritative PDF Canvas/TextLayer
-- TXT and Markdown-as-text reading with UTF-8/GB18030 fallback, local heading outlines, true horizontal pagination, and continuous scrolling
+- TXT reading plus safe local Markdown rendering with UTF-8/GB18030 fallback, semantic headings/lists/quotes/code, local heading outlines, true horizontal pagination, and continuous scrolling
 - In-book search across EPUB, PDF, TXT, and Markdown, with local-only queries, bounded results, source-aware navigation, and active-match highlighting
 - Reader-toolbar switch between paged and scrolling modes for reflowable EPUB, PDF, TXT, and Markdown, remembered per document
 - Chinese/English interface with a locally remembered language choice
@@ -58,6 +58,7 @@ The production build uses relative paths so application chunks, PDF workers, the
 - No accounts, analytics, telemetry, cloud storage, runtime CDN, or remote metadata lookups
 - Feedback is an explicit text-only request to `feedback.070315.site`, limited to 2000 characters. The service retains necessary connection details for rate limiting and abuse prevention; do not include sensitive information
 - Ordinary reading, importing, search, progress updates, and PDF reflow send no book text or search queries over the network
+- Markdown rendering is a local, source-range-aware parser: raw HTML and unsafe links are displayed or downgraded as text, links never navigate automatically, code is rendered literally, and images never load remote resources
 - Content translation, provider credentials, and translation network routes are not part of the application
 - Source books are stored in browser IndexedDB and never included in GitHub artifacts
 - EPUB scripted content and external network access are blocked by Content Security Policy
