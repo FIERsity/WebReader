@@ -171,9 +171,6 @@ h2 { margin: 0; font-size: 20px; }
 .reading-mode-switch button:hover { color: inherit; background: var(--reader-toolbar-hover); }
 .reading-mode-switch button.active { color: white; background: var(--green); }
 .reading-mode-switch svg { width: 15px; height: 15px; }
-.reader-controls .language-switch { margin-left: 3px; border-color: var(--reader-toolbar-control-border); background: transparent; }
-.theme-night .reader-controls .language-switch button { color: var(--reader-toolbar-muted); }
-.theme-night .reader-controls .language-switch button.active { color: white; }
 .icon-button { width: 40px; height: 40px; flex: 0 0 40px; padding: 0; border: 0; border-radius: 5px; background: transparent; display: grid; place-items: center; cursor: pointer; }
 .reader-shell .reader-toolbar .icon-button:hover { background: var(--reader-toolbar-hover); }
 .reader-shell .reader-toolbar .icon-button.active {
@@ -395,7 +392,6 @@ h2 { margin: 0; font-size: 20px; }
   .reader-toolbar { gap: 4px; padding-inline: 6px; }
   .reader-title strong { font-size: 12px; }
   .reader-title span { display: none; }
-  .reader-controls .language-switch { margin-left: 0; grid-template-columns: repeat(2, 34px); }
   .reading-mode-switch button { min-width: 40px; width: 40px; padding: 0; }
   .reading-mode-switch span { display: none; }
   .reader-panel { position: absolute; top: 0; bottom: 0; width: min(300px, calc(100vw - 46px)); min-width: 0; box-shadow: 0 12px 34px rgba(0,0,0,.2); }

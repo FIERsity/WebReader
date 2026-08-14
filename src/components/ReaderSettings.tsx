@@ -1,10 +1,12 @@
 import { useEffect, useRef } from "react";
 import { Minus, Plus, Settings2, X } from "lucide-react";
-import type { TranslationKey, TranslationVariables } from "../lib/i18n";
+import type { Language, TranslationKey, TranslationVariables } from "../lib/i18n";
 import type { ReaderPreferences } from "../types/library";
 
 interface ReaderSettingsProps {
+  language: Language;
   preferences: ReaderPreferences;
+  onLanguageChange: (language: Language) => void;
   onChange: (next: ReaderPreferences) => void;
   onClose: () => void;
   typography: boolean;
@@ -35,7 +37,7 @@ const widths: Array<{ value: ReaderPreferences["contentWidth"]; label: Translati
   { value: "wide", label: "wide" },
 ];
 
-export function ReaderSettings({ preferences, onChange, onClose, typography, publisherFont, triggerRef, t }: ReaderSettingsProps) {
+export function ReaderSettings({ language, preferences, onLanguageChange, onChange, onClose, typography, publisherFont, triggerRef, t }: ReaderSettingsProps) {
   const closeRef = useRef<HTMLButtonElement>(null);
   useEffect(() => {
     const trigger = triggerRef?.current;
@@ -55,6 +57,14 @@ export function ReaderSettings({ preferences, onChange, onClose, typography, pub
         <div><Settings2 /><strong>{t("readerSettings")}</strong></div>
         <button ref={closeRef} className="icon-button" type="button" onClick={onClose} aria-label={t("closeSettings")}><X /></button>
       </header>
+
+      <section className="setting-group">
+        <span className="setting-label">{t("language")}</span>
+        <div className="segmented-control" role="group" aria-label={t("language")}>
+          <button type="button" className={language === "zh" ? "active" : ""} aria-pressed={language === "zh"} onClick={() => onLanguageChange("zh")}>中</button>
+          <button type="button" className={language === "en" ? "active" : ""} aria-pressed={language === "en"} onClick={() => onLanguageChange("en")}>EN</button>
+        </div>
+      </section>
 
       {typography && (
         <>

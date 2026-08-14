@@ -537,7 +537,6 @@ export default function App() {
             >
               <Settings2 />
             </button>
-            {languageControl}
           </div>
         </header>
         <div className="reader-workspace">
@@ -622,10 +621,12 @@ export default function App() {
           </section>
           {readerPanel === "settings" && (
             <ReaderSettings
+              language={language}
               preferences={preferences}
               typography={capabilities.typography}
               publisherFont={capabilities.publisherFont}
               triggerRef={settingsButtonRef}
+              onLanguageChange={setLanguage}
               onChange={updatePreferences}
               onClose={() => setReaderPanel(undefined)}
               t={t}
