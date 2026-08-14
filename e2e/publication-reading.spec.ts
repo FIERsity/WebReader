@@ -33,9 +33,14 @@ test("opens a synthetic PDF and preserves its page across mode changes", async (
 
   await expect(page.getByRole("toolbar", { name: "PDF 阅读视图" })).toBeVisible();
   await expect(page.locator(".pdf-page-surface")).toBeVisible();
+  await expect.poll(() => page.locator(".pdf-page-surface canvas").evaluate((canvas: HTMLCanvasElement) => {
+    const context = canvas.getContext("2d");
+    return context ? context.getImageData(0, 0, 1, 1).data[3] : 0;
+  })).toBeGreaterThan(0);
   await expect(page.locator(".page-status")).toHaveText("1 / 1");
   await page.getByRole("button", { name: "滚动" }).click();
   await expect(page.locator(".continuous-pdf-track")).toBeVisible();
+  await expect(page.locator(".continuous-pdf-track .pdf-page-surface canvas")).toBeVisible();
   await page.getByRole("button", { name: "翻页" }).click();
   await expect(page.locator(".pdf-page-surface")).toBeVisible();
   await expect(page.getByText("无法渲染此 PDF 页面。")).toHaveCount(0);

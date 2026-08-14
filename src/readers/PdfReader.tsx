@@ -32,7 +32,9 @@ function acquirePageLease(page: PDFPageProxy): () => void {
     const remaining = (pageRenderLeases.get(page) ?? 1) - 1;
     if (remaining <= 0) {
       pageRenderLeases.delete(page);
-      page.cleanup();
+      window.setTimeout(() => {
+        if (!pageRenderLeases.has(page)) page.cleanup();
+      }, 0);
     } else pageRenderLeases.set(page, remaining);
   };
 }
@@ -180,6 +182,9 @@ function PdfCanvas({ page, availableWidth, label, activeFragments, onTextSelecti
     });
     void renderTask.promise.catch((reason: unknown) => {
       if (active && (reason as { name?: string })?.name !== "RenderingCancelledException") setRenderFailed(true);
+    });
+    void renderTask.promise.then(() => {
+      if (active) setRenderFailed(false);
     });
     return () => {
       active = false;
