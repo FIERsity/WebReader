@@ -12,10 +12,11 @@ Production: https://FIERsity.github.io/WebReader/
 - Local PDF article reflow for text-layer papers, with deterministic single-column reading order, per-page diagnostics, and a side-by-side proof view
 - Stable source-block mapping between reflowed text and the authoritative PDF Canvas/TextLayer
 - TXT and Markdown-as-text reading with UTF-8/GB18030 fallback, local heading outlines, true horizontal pagination, and continuous scrolling
+- In-book search across EPUB, PDF, TXT, and Markdown, with local-only queries, bounded results, source-aware navigation, and active-match highlighting
 - Reader-toolbar switch between paged and scrolling modes for reflowable EPUB, PDF, TXT, and Markdown, remembered per document
 - Chinese/English interface with a locally remembered language choice
 - Reading controls for text size, local font stacks, line spacing, first-line indent, text width, and four background themes
-- Keyboard navigation for page turns, contents, text size, and panel dismissal
+- Keyboard navigation for page turns, contents, in-book search (`Ctrl/⌘+F`), text size, and panel dismissal
 - Explicit text-only feedback submission to the developer's feedback server
 - Duplicate detection, local deletion, a 250 MB per-file safety limit for EPUB/PDF, and an 8 MB limit for browser-rendered TXT/Markdown
 - Bounded EPUB container preflight that rejects encrypted, malformed, path-unsafe, duplicate, and excessive expanded entries before they reach the library
@@ -23,7 +24,7 @@ Production: https://FIERsity.github.io/WebReader/
 - Installable PWA application shell
 - Fully static GitHub Pages deployment
 
-Books, extracted content, reading progress, and preferences remain in the current browser. Clearing site data can remove the local library. PWA installation is not a backup. For a text-layer PDF, **Reflowed article** analyzes text locally and reconstructs a continuous single-column reading order without an LLM. **Proof view** places each original PDF page beside the blocks assigned to that page so column order, omissions, headers, footers, equations, and references can be checked against the visual source.
+Books, extracted content, search queries, search results, reading progress, and preferences remain in the current browser. Search indexes exist only in memory for the open reader and are not written to IndexedDB or Cache Storage. Clearing site data can remove the local library. PWA installation is not a backup. For a text-layer PDF, **Reflowed article** analyzes text locally and reconstructs a continuous single-column reading order without an LLM. **Proof view** places each original PDF page beside the blocks assigned to that page so column order, omissions, headers, footers, equations, and references can be checked against the visual source.
 
 The original PDF Canvas remains authoritative. Its PDF.js text layer is selectable and maps selections to stable source blocks. Selecting a reflowed block records its source page and region, so returning to the original PDF highlights the corresponding geometry. Review and rejected pages are reported explicitly; scanned PDFs without a usable text layer still require OCR, which WebReader does not currently provide. WebReader does not currently include content translation, provider configuration, or a translation development proxy. Legacy translation tables remain in IndexedDB only so existing browser libraries can be opened and cleaned up without deleting books.
 
@@ -40,7 +41,7 @@ npm run preview
 ```
 
 `npm run check` runs unit tests, lint, TypeScript, and the production build.
-`npm run test:e2e` builds the production application and exercises synthetic EPUB/PDF/text import, navigation, progress restoration, and PWA cache privacy in Chrome. Install Chrome once with `npx playwright install chrome` when it is not already available.
+`npm run test:e2e` builds the production application and exercises synthetic EPUB/PDF/text import, navigation, cross-format search, source highlighting, progress restoration, and PWA/cache privacy in Chrome. Install Chrome once with `npx playwright install chrome` when it is not already available.
 
 ### Local Paper Reflow
 
@@ -56,7 +57,7 @@ The production build uses relative paths so application chunks, PDF workers, the
 
 - No accounts, analytics, telemetry, cloud storage, runtime CDN, or remote metadata lookups
 - Feedback is an explicit text-only request to `feedback.070315.site`, limited to 2000 characters. The service retains necessary connection details for rate limiting and abuse prevention; do not include sensitive information
-- Ordinary reading, importing, progress updates, and PDF reflow send no book text over the network
+- Ordinary reading, importing, search, progress updates, and PDF reflow send no book text or search queries over the network
 - Content translation, provider credentials, and translation network routes are not part of the application
 - Source books are stored in browser IndexedDB and never included in GitHub artifacts
 - EPUB scripted content and external network access are blocked by Content Security Policy

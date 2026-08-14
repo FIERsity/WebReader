@@ -52,3 +52,27 @@ test("reports empty text and rejects a renamed ZIP before it reaches the shelf",
   await expect(page.getByRole("status")).toContainText("此文件不是有效的 DRM-free EPUB");
   await expect(page.getByRole("button", { name: /打开《invalid》/ })).toHaveCount(0);
 });
+
+test("searches Markdown locally, jumps to the match, and clears the highlight", async ({ page }) => {
+  const unexpectedRequests: string[] = [];
+  page.on("request", (request) => {
+    const url = new URL(request.url());
+    if (url.origin !== "http://127.0.0.1:4175") unexpectedRequests.push(request.url());
+  });
+  await page.goto("/");
+  await page.locator('input[type="file"]').setInputFiles(fixture);
+  await page.getByRole("button", { name: "打开《long reader》" }).click();
+
+  await expect(page.getByRole("button", { name: "书内搜索" })).toBeEnabled();
+  await page.keyboard.press("Control+f");
+  const search = page.getByRole("searchbox", { name: "书内搜索" });
+  await expect(search).toBeFocused();
+  await search.fill("横向移动恰好一个阅读区域");
+  await search.press("Enter");
+  await expect(page.getByRole("status").filter({ hasText: "找到 1 处" })).toBeVisible();
+  await page.locator(".search-result").click();
+  await expect(page.locator(".text-search-highlight")).toHaveText("横向移动恰好一个阅读区域");
+  await page.getByRole("button", { name: "关闭书内搜索" }).click();
+  await expect(page.locator(".text-search-highlight")).toHaveCount(0);
+  expect(unexpectedRequests).toEqual([]);
+});

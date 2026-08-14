@@ -4,6 +4,7 @@ import { buildEpubStyles } from "../lib/epubStyles";
 import type { TranslationKey, TranslationVariables } from "../lib/i18n";
 import type { ReaderPreferences, ReadingLocator, ReadingProfile } from "../types/library";
 import { WheelGesture, normalizedWheelDelta, shouldIgnoreWheel } from "../lib/wheelPager";
+import { throwIfSearchAborted } from "../lib/readerSearch";
 import type { ReaderCapabilities, ReaderController, ReaderOutlineItem } from "../types/reader";
 import "foliate-js/view.js";
 
@@ -43,6 +44,7 @@ export function EpubReader({
   const pendingLocatorRef = useRef<ReadingLocator | undefined>(undefined);
   const preferencesRef = useRef(preferences);
   const relocationTimerRef = useRef<number | undefined>(undefined);
+  const activeSearchAnnotationRef = useRef<{ value: string } | undefined>(undefined);
   const tRef = useRef(t);
 
   useEffect(() => { tRef.current = t; }, [t]);
@@ -63,6 +65,8 @@ export function EpubReader({
     let initializationFinished = false;
     let disposeRequested = false;
     let lastWrite = 0;
+    let annotationGeneration = 0;
+    let activeSearchIterator: ReturnType<FoliateViewElement["search"]> | undefined;
     const handleRelocate = (event: Event) => {
       if (!active) return;
       const detail = (event as CustomEvent<{ fraction?: number; cfi?: string; tocItem?: { label?: string; href?: string } }>).detail;
@@ -147,6 +151,19 @@ export function EpubReader({
       message.textContent = tRef.current("epubOpenFailed");
       host.append(message);
     };
+    const clearSearchAnnotations = () => {
+      annotationGeneration += 1;
+      view.clearSearch();
+      const annotation = activeSearchAnnotationRef.current;
+      activeSearchAnnotationRef.current = undefined;
+      if (annotation) void view.deleteAnnotation(annotation).catch(() => undefined);
+    };
+    const cancelSearch = () => {
+      const iterator = activeSearchIterator;
+      activeSearchIterator = undefined;
+      clearSearchAnnotations();
+      if (iterator) void iterator.return(undefined).catch(() => undefined).finally(clearSearchAnnotations);
+    };
 
     const openBook = async () => {
       let failed = false;
@@ -160,6 +177,7 @@ export function EpubReader({
           publisherFont: !fixedLayout,
           readingProfile: !fixedLayout,
           paginated: fixedLayout || readingProfile === "book",
+          search: true,
         });
         onOutline(normalizeOutline(view.book?.toc));
         view.addEventListener("load", handleLoad);
@@ -186,10 +204,63 @@ export function EpubReader({
       previous: () => void view.prev(),
       next: () => void view.next(),
       goTo: (target) => void view.goTo(target),
+      search: async (query, options) => {
+        const previous = activeSearchIterator;
+        activeSearchIterator = undefined;
+        if (previous) await previous.return(undefined).catch(() => undefined);
+        clearSearchAnnotations();
+        const results = [];
+        let truncated = false;
+        const indexes: Array<number | undefined> = view.book?.sections?.flatMap((section, index) => section.createDocument ? [index] : []) ?? [];
+        if (indexes.length === 0) indexes.push(undefined);
+        searchLoop: for (const [position, index] of indexes.entries()) {
+          const iterator = view.search({ query, index });
+          activeSearchIterator = iterator;
+          try {
+            for await (const item of iterator) {
+              throwIfSearchAborted(options.signal);
+              if (typeof item === "string" || "progress" in item) continue;
+              const matches = "subitems" in item ? item.subitems : [item];
+              for (const match of matches) {
+                if (results.length >= options.maxResults) {
+                  truncated = true;
+                  break searchLoop;
+                }
+                results.push({
+                  id: `epub-${match.cfi}-${results.length}`,
+                  target: match.cfi,
+                  label: "subitems" in item ? item.label || undefined : undefined,
+                  excerpt: match.excerpt,
+                });
+              }
+            }
+          } finally {
+            if (activeSearchIterator === iterator) activeSearchIterator = undefined;
+          }
+          throwIfSearchAborted(options.signal);
+          options.onProgress?.((position + 1) / indexes.length);
+        }
+        throwIfSearchAborted(options.signal);
+        view.clearSearch();
+        options.onProgress?.(1);
+        return { results, truncated };
+      },
+      goToSearch: (result) => {
+        cancelSearch();
+        const annotation = { value: `foliate-search:${result.target}` };
+        const generation = annotationGeneration;
+        activeSearchAnnotationRef.current = annotation;
+        void view.goTo(result.target).then(() => {
+          if (generation !== annotationGeneration || activeSearchAnnotationRef.current !== annotation) return;
+          return view.addAnnotation(annotation);
+        }).catch(() => undefined);
+      },
+      clearSearch: cancelSearch,
     };
 
     return () => {
       active = false;
+      cancelSearch();
       navigationRef.current = null;
       view.renderer?.removeEventListener("wheel", handleWheel);
       for (const doc of wheelDocuments) doc.removeEventListener("wheel", handleWheel);

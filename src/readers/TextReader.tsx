@@ -11,7 +11,8 @@ import {
 } from "../lib/textPagination";
 import type { ReaderPreferences, ReadingLocator, ReadingProfile } from "../types/library";
 import { WheelGesture, normalizedWheelDelta, shouldIgnoreWheel } from "../lib/wheelPager";
-import type { ReaderCapabilities, ReaderController, ReaderOutlineItem } from "../types/reader";
+import { findTextMatches, throwIfSearchAborted } from "../lib/readerSearch";
+import type { ReaderCapabilities, ReaderController, ReaderOutlineItem, ReaderSearchResult } from "../types/reader";
 
 interface TextReaderProps {
   layoutRevision?: string;
@@ -99,6 +100,7 @@ export function TextReader({
   const [error, setError] = useState<TranslationKey>();
   const [pageLayout, setPageLayout] = useState<TextPageLayout>();
   const [pageTrackWidth, setPageTrackWidth] = useState(0);
+  const [activeSearchMatch, setActiveSearchMatch] = useState<{ start: number; end: number }>();
   const blocks = useMemo(() => splitTextBlocks(text), [text]);
   const hasReadableText = text.trim().length > 0;
   const markdown = mediaType === "text/markdown" || /\.md$/i.test(fileName);
@@ -127,10 +129,10 @@ export function TextReader({
     if (!text) return;
     const outline = markdown ? extractMarkdownOutline(text) : extractTextOutline(text);
     onOutline(outline, !markdown && outline.length > 0);
-    onCapabilities({ typography: true, outline: outline.length > 0, publisherFont: false, readingProfile: true, paginated });
+    onCapabilities({ typography: true, outline: outline.length > 0, publisherFont: false, readingProfile: true, paginated, search: true });
     return () => {
       onOutline([]);
-      onCapabilities({ typography: false, outline: false, publisherFont: false, readingProfile: false, paginated: false });
+      onCapabilities({ typography: false, outline: false, publisherFont: false, readingProfile: false, paginated: false, search: false });
     };
   }, [markdown, onCapabilities, onOutline, paginated, text]);
 
@@ -315,6 +317,18 @@ export function TextReader({
     reportPageLocation();
   }, [pageLayout, reportPageLocation]);
 
+  const navigateToOffset = useCallback((offset: number) => {
+    const normalizedOffset = Math.min(text.length, Math.max(0, offset));
+    const progression = text.length > 0 ? normalizedOffset / text.length : 0;
+    currentOffsetRef.current = normalizedOffset;
+    queueProgress(normalizedOffset, progression);
+    restoreOffset(normalizedOffset);
+    window.requestAnimationFrame(() => {
+      if (paginated) reportPageLocation();
+      else reportScrollLocation();
+    });
+  }, [paginated, queueProgress, reportPageLocation, reportScrollLocation, restoreOffset, text.length]);
+
   useEffect(() => {
     const element = scrollRef.current;
     if (!element || !paginated) return;
@@ -347,19 +361,27 @@ export function TextReader({
       goTo: (target) => {
         const offset = Number(target);
         if (!Number.isFinite(offset)) return;
-        const normalizedOffset = Math.min(text.length, Math.max(0, offset));
-        const progression = text.length > 0 ? normalizedOffset / text.length : 0;
-        currentOffsetRef.current = normalizedOffset;
-        queueProgress(normalizedOffset, progression);
-        restoreOffset(normalizedOffset);
-        window.requestAnimationFrame(() => {
-          if (paginated) reportPageLocation();
-          else reportScrollLocation();
-        });
+        setActiveSearchMatch(undefined);
+        navigateToOffset(offset);
       },
+      search: async (query, options) => {
+        setActiveSearchMatch(undefined);
+        throwIfSearchAborted(options.signal);
+        const outcome = findTextMatches(text, query, { maxResults: options.maxResults, idPrefix: "text" });
+        options.onProgress?.(1);
+        throwIfSearchAborted(options.signal);
+        return outcome;
+      },
+      goToSearch: (result: ReaderSearchResult) => {
+        const start = Number(result.target);
+        if (!Number.isFinite(start)) return;
+        setActiveSearchMatch({ start, end: start + result.excerpt.match.length });
+        navigateToOffset(start);
+      },
+      clearSearch: () => setActiveSearchMatch(undefined),
     };
     return () => { navigationRef.current = null; };
-  }, [navigationRef, paginated, queueProgress, reportPageLocation, reportScrollLocation, restoreOffset, text.length, turnPage]);
+  }, [navigateToOffset, navigationRef, paginated, text, turnPage]);
 
   useEffect(() => () => {
     window.cancelAnimationFrame(restoreFrameRef.current);
@@ -387,15 +409,22 @@ export function TextReader({
     <div className={`reader-stage text-stage text-stage-${paginated ? "paged" : "scroll"} theme-${preferences.theme}`} ref={scrollRef}>
       {paginated && pageTrackWidth > 0 && <span className="text-page-track" aria-hidden="true" style={{ width: `${pageTrackWidth}px` }} />}
       <article ref={articleRef} style={articleStyle}>
-        {hasReadableText ? blocks.map((block) => (
+        {hasReadableText ? blocks.map((block) => {
+          const matchStart = activeSearchMatch ? Math.max(block.start, activeSearchMatch.start) : block.end;
+          const matchEnd = activeSearchMatch ? Math.min(block.end, activeSearchMatch.end) : block.start;
+          const hasMatch = matchStart < matchEnd;
+          const localStart = Math.max(0, matchStart - block.start);
+          const localEnd = Math.max(localStart, matchEnd - block.start);
+          return (
           <p
             key={block.id}
             ref={(node) => { if (node) blocksRef.current.set(block.start, node); else blocksRef.current.delete(block.start); }}
             style={{ textIndent: preferences.paragraphIndent ? `${preferences.paragraphIndent}em` : undefined }}
           >
-            {block.text}
+            {hasMatch ? <>{block.text.slice(0, localStart)}<mark className="text-search-highlight">{block.text.slice(localStart, localEnd)}</mark>{block.text.slice(localEnd)}</> : block.text}
           </p>
-        )) : loaded ? t("emptyText") : t("loadingText")}
+          );
+        }) : loaded ? t("emptyText") : t("loadingText")}
       </article>
     </div>
   );

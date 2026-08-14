@@ -17,6 +17,7 @@ declare global {
       metadata?: FoliateBookMetadata;
       toc?: FoliateTocItem[];
       rendition?: { layout?: string };
+      sections?: Array<{ createDocument?: () => Promise<Document> | Document }>;
       destroy?: () => void;
     };
     renderer?: HTMLElement & {
@@ -37,6 +38,15 @@ declare global {
     prev: () => Promise<void>;
     next: () => Promise<void>;
     goTo: (target: string | number | { fraction: number }) => Promise<unknown>;
+    search: (options: { query: string; index?: number }) => AsyncGenerator<
+      | string
+      | { progress: number }
+      | { cfi: string; excerpt: { pre: string; match: string; post: string } }
+      | { label: string; subitems: Array<{ cfi: string; excerpt: { pre: string; match: string; post: string } }> }
+    >;
+    clearSearch: () => void;
+    addAnnotation: (annotation: { value: string }) => Promise<unknown>;
+    deleteAnnotation: (annotation: { value: string }) => Promise<unknown>;
   }
 
   interface HTMLElementTagNameMap {

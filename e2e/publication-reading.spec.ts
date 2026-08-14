@@ -70,3 +70,59 @@ test("serves an installable application shell without caching imported books", a
   });
   expect(cachedUrls.some((url) => url.includes("private-synthetic"))).toBe(false);
 });
+
+test("searches a synthetic EPUB without sending publication text", async ({ page }) => {
+  const unexpectedRequests: string[] = [];
+  page.on("request", (request) => {
+    const url = new URL(request.url());
+    if (url.origin !== "http://127.0.0.1:4175") unexpectedRequests.push(request.url());
+  });
+  await page.goto("/");
+  await page.locator('input[type="file"]').setInputFiles({
+    name: "searchable.epub",
+    mimeType: "application/epub+zip",
+    buffer: syntheticEpub(),
+  });
+  await page.getByRole("button", { name: "打开《searchable》" }).click();
+  await expect(page.getByRole("button", { name: "书内搜索" })).toBeEnabled();
+  await page.getByRole("button", { name: "书内搜索" }).click();
+  const searchbox = page.getByRole("searchbox", { name: "书内搜索" });
+  await searchbox.fill("自动化");
+  await searchbox.press("Enter");
+  await searchbox.fill("不存在的合成关键词");
+  await searchbox.press("Enter");
+  await expect(page.locator(".search-result")).toHaveCount(0);
+  await searchbox.fill("自动化测试生成");
+  await searchbox.press("Enter");
+  await expect(page.locator(".search-result")).toHaveCount(1);
+  await page.locator(".search-result").click();
+  await expect.poll(() => page.locator("foliate-view").evaluate((view) => {
+    const renderer = (view as unknown as { renderer?: { getContents?: () => Array<{ overlayer?: { element?: SVGElement } }> } }).renderer;
+    return renderer?.getContents?.().reduce((count, content) => count + (content.overlayer?.element?.childElementCount ?? 0), 0) ?? 0;
+  })).toBeGreaterThan(0);
+  await page.getByRole("button", { name: "关闭书内搜索" }).click();
+  await expect.poll(() => page.locator("foliate-view").evaluate((view) => {
+    const renderer = (view as unknown as { renderer?: { getContents?: () => Array<{ overlayer?: { element?: SVGElement } }> } }).renderer;
+    return renderer?.getContents?.().reduce((count, content) => count + (content.overlayer?.element?.childElementCount ?? 0), 0) ?? 0;
+  })).toBe(0);
+  expect(unexpectedRequests).toEqual([]);
+});
+
+test("searches PDF text and highlights its source region on the Canvas", async ({ page }) => {
+  await page.goto("/");
+  await page.locator('input[type="file"]').setInputFiles({
+    name: "searchable.pdf",
+    mimeType: "application/pdf",
+    buffer: syntheticPdf(),
+  });
+  await page.getByRole("button", { name: "打开《searchable》" }).click();
+  await expect(page.getByRole("button", { name: "书内搜索" })).toBeEnabled();
+  await page.getByRole("button", { name: "书内搜索" }).click();
+  await page.getByRole("searchbox", { name: "书内搜索" }).fill("Synthetic WebReader");
+  await page.getByRole("searchbox", { name: "书内搜索" }).press("Enter");
+  await expect(page.locator(".search-result")).toHaveCount(1);
+  await page.locator(".search-result").click();
+  await expect(page.locator(".pdf-source-highlight")).toBeVisible();
+  await page.getByRole("button", { name: "关闭书内搜索" }).click();
+  await expect(page.locator(".pdf-source-highlight")).toHaveCount(0);
+});

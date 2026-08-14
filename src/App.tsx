@@ -1,10 +1,11 @@
 import { type ReactNode, lazy, Suspense, useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import {
   BookOpen, ChevronLeft, ChevronRight, FileText, Import, Library,
-  ListTree, MessageSquare, Plus, Rows3, Settings2, Trash2, X,
+  ListTree, MessageSquare, Plus, Rows3, Search, Settings2, Trash2, X,
 } from "lucide-react";
 import "./App.css";
 import { ReaderOutline } from "./components/ReaderOutline";
+import { ReaderSearch } from "./components/ReaderSearch";
 import { ReaderSettings } from "./components/ReaderSettings";
 import { submitFeedback, MAX_FEEDBACK_LENGTH } from "./lib/feedback";
 import { BookFormatError, detectBookFormat, displayTitle, formatBytes } from "./lib/formats";
@@ -208,7 +209,7 @@ export default function App() {
   const [message, setMessage] = useState<string>();
   const [deleteTarget, setDeleteTarget] = useState<BookRecord>();
   const [feedbackOpen, setFeedbackOpen] = useState(false);
-  const [readerPanel, setReaderPanel] = useState<"outline" | "settings">();
+  const [readerPanel, setReaderPanel] = useState<"outline" | "search" | "settings">();
   const [outline, setOutline] = useState<ReaderOutlineItem[]>([]);
   const [automaticOutline, setAutomaticOutline] = useState(false);
   const [currentTarget, setCurrentTarget] = useState<string>();
@@ -217,6 +218,7 @@ export default function App() {
   const [updateAction, setUpdateAction] = useState<(() => void) | undefined>();
   const fileInputRef = useRef<HTMLInputElement>(null);
   const outlineButtonRef = useRef<HTMLButtonElement>(null);
+  const searchButtonRef = useRef<HTMLButtonElement>(null);
   const settingsButtonRef = useRef<HTMLButtonElement>(null);
   const navigationRef = useRef<ReaderController | null>(null);
   const profileWriteRef = useRef(Promise.resolve());
@@ -236,6 +238,7 @@ export default function App() {
     decreaseText: () => void;
     increaseText: () => void;
     toggleOutline: () => void;
+    openSearch: () => void;
     closePanel: () => void;
     typography: boolean;
   }>({
@@ -244,6 +247,7 @@ export default function App() {
     decreaseText: () => undefined,
     increaseText: () => undefined,
     toggleOutline: () => undefined,
+    openSearch: () => undefined,
     closePanel: () => undefined,
     typography: false,
   });
@@ -426,6 +430,9 @@ export default function App() {
     toggleOutline: () => {
       if (capabilities.outline) setReaderPanel((current) => current === "outline" ? undefined : "outline");
     },
+    openSearch: () => {
+      if (capabilities.search) setReaderPanel("search");
+    },
     closePanel: () => setReaderPanel(undefined),
     typography: capabilities.typography,
   };
@@ -444,6 +451,7 @@ export default function App() {
   }, [deleteTarget, refreshBooks]);
 
   const changeReadingProfile = useCallback((book: BookRecord, readingProfile: ReadingProfile) => {
+    setReaderPanel(undefined);
     readingProfileRef.current.set(book.id, readingProfile);
     setBooks((current) => current.map((item) => item.id === book.id ? { ...item, readingProfile } : item));
     setActiveBook((current) => current?.id === book.id ? { ...current, readingProfile } : current);
@@ -481,6 +489,18 @@ export default function App() {
               onClick={() => setReaderPanel((current) => current === "outline" ? undefined : "outline")}
             >
               <ListTree />
+            </button>
+            <button
+              ref={searchButtonRef}
+              className={`icon-button ${readerPanel === "search" ? "active" : ""}`}
+              type="button"
+              title={t("searchBook")}
+              aria-label={t("searchBook")}
+              aria-expanded={readerPanel === "search"}
+              disabled={!capabilities.search}
+              onClick={() => setReaderPanel((current) => current === "search" ? undefined : "search")}
+            >
+              <Search />
             </button>
           </div>
           <div className="reader-title">
@@ -532,6 +552,14 @@ export default function App() {
               }}
               onClose={() => setReaderPanel(undefined)}
               triggerRef={outlineButtonRef}
+              t={t}
+            />
+          )}
+          {readerPanel === "search" && (
+            <ReaderSearch
+              controllerRef={navigationRef}
+              onClose={() => setReaderPanel(undefined)}
+              triggerRef={searchButtonRef}
               t={t}
             />
           )}

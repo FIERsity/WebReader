@@ -11,6 +11,11 @@ import {
 import { getPdfOutline } from "../lib/pdfOutline";
 import { fitsCanvasLimit, MAX_PDF_CANVAS_PIXELS } from "../lib/pdfLimits";
 import {
+  MAX_PDF_SEARCH_CHARACTERS, MAX_PDF_SEARCH_ITEMS_PER_PAGE, MAX_PDF_SEARCH_PAGES,
+  searchPdfTextItems, type PdfSearchTextItem,
+} from "../lib/pdfSearch";
+import { throwIfSearchAborted } from "../lib/readerSearch";
+import {
   analyzePdfTextPage, buildPdfPaperDocument, MAX_PDF_ANALYSIS_CHARACTERS, MAX_PDF_ANALYSIS_PAGES,
   type PdfPaperBlock, type PdfPaperDocument, type PdfRawTextItem,
 } from "../lib/pdfText";
@@ -93,6 +98,34 @@ function toRawTextItem(item: PdfJsTextItem, sourceIndex: number, viewport: Retur
     fontName: item.fontName,
     hasEOL: item.hasEOL,
     coordinateSpace: "viewport",
+  };
+}
+
+function clampUnit(value: number): number {
+  return Math.max(0, Math.min(1, value));
+}
+
+function toPdfSearchTextItem(
+  item: PdfJsTextItem,
+  sourceIndex: number,
+  pageNumber: number,
+  viewport: ReturnType<PDFPageProxy["getViewport"]>,
+): PdfSearchTextItem | undefined {
+  if (!item.str.trim()) return undefined;
+  const raw = toRawTextItem(item, sourceIndex, viewport);
+  const [a = 0, b = 0, c = 0, d = 0, x = 0, baseline = 0] = raw.transform;
+  const fontHeight = Math.max(1, raw.height || Math.hypot(c, d) || Math.hypot(a, b));
+  const width = Math.max(0.5, Math.abs(raw.width));
+  return {
+    text: item.str,
+    sourceIndex,
+    fragment: {
+      page: pageNumber,
+      left: clampUnit(x / viewport.width),
+      top: clampUnit((baseline - fontHeight) / viewport.height),
+      width: clampUnit(width / viewport.width),
+      height: clampUnit(fontHeight / viewport.height),
+    },
   };
 }
 
@@ -357,10 +390,13 @@ export function PdfReader({
   const restoringRef = useRef(readingProfile === "article");
   const pendingPaperPageRef = useRef<number | undefined>(undefined);
   const analysisAbortRef = useRef<AbortController | undefined>(undefined);
+  const searchPageCacheRef = useRef(new Map<number, { items: PdfSearchTextItem[]; truncated: boolean; characterLimit: boolean }>());
+  const searchFragmentsRef = useRef(new Map<string, PdfPaperBlock["fragments"]>());
   const pendingPaperModeRef = useRef<"article" | "proof" | undefined>(undefined);
   const [viewMode, setViewMode] = useState<"pdf" | "paper">("pdf");
   const [paperDisplayMode, setPaperDisplayMode] = useState<"article" | "proof">("article");
   const [activeBlockId, setActiveBlockId] = useState<string>();
+  const [searchFragments, setSearchFragments] = useState<PdfPaperBlock["fragments"]>();
   const [analysis, setAnalysis] = useState<PdfAnalysisState>({ status: "idle", completedPages: 0, totalPages: 0 });
   const [stageElement, setStageElement] = useState<HTMLDivElement | null>(null);
   const [stageWidth, setStageWidth] = useState(0);
@@ -395,8 +431,8 @@ export function PdfReader({
     return grouped;
   }, [analysis.document]);
   const activeFragments = useMemo(
-    () => analysis.document?.blocks.find((block) => block.id === activeBlockId)?.fragments,
-    [activeBlockId, analysis.document],
+    () => searchFragments ?? analysis.document?.blocks.find((block) => block.id === activeBlockId)?.fragments,
+    [activeBlockId, analysis.document, searchFragments],
   );
 
   const setStage = useCallback((node: HTMLDivElement | null) => {
@@ -432,6 +468,8 @@ export function PdfReader({
   useEffect(() => {
     let active = true;
     let task: ReturnType<typeof getDocument> | undefined;
+    const searchPageCache = searchPageCacheRef.current;
+    const searchFragmentsByResult = searchFragmentsRef.current;
     measuredPageRatiosRef.current.clear();
     setFatalError(undefined);
     void file.arrayBuffer().then((data) => {
@@ -470,13 +508,15 @@ export function PdfReader({
       setPageAspectRatios([]);
       setHasOutline(false);
       onOutline([]);
-      onCapabilities({ typography: false, outline: false, publisherFont: false, readingProfile: false, paginated: false });
+      searchPageCache.clear();
+      searchFragmentsByResult.clear();
+      onCapabilities({ typography: false, outline: false, publisherFont: false, readingProfile: false, paginated: false, search: false });
       void task?.destroy();
     };
   }, [file, onCapabilities, onOutline]);
 
   useEffect(() => {
-    onCapabilities({ typography: false, outline: hasOutline, publisherFont: false, readingProfile: pageCount > 0, paginated: !continuous });
+    onCapabilities({ typography: false, outline: hasOutline, publisherFont: false, readingProfile: pageCount > 0, paginated: !continuous, search: pageCount > 0 });
   }, [continuous, hasOutline, onCapabilities, pageCount]);
 
   useEffect(() => {
@@ -624,6 +664,118 @@ export function PdfReader({
     };
   }, [continuousCanvas, pageCount, showingPaper, stageElement]);
 
+  const searchPdf = useCallback(async (query: string, options: Parameters<NonNullable<ReaderController["search"]>>[1]) => {
+    const pdf = documentRef.current;
+    if (!pdf) return { results: [], truncated: false };
+    searchFragmentsRef.current.clear();
+    setSearchFragments(undefined);
+    const results = [];
+    const pageLimit = Math.min(pdf.numPages, MAX_PDF_SEARCH_PAGES);
+    let characterCount = 0;
+    let truncated = pdf.numPages > pageLimit;
+    for (let pageIndex = 1; pageIndex <= pageLimit; pageIndex += 1) {
+      throwIfSearchAborted(options.signal);
+      const cachedPage = searchPageCacheRef.current.get(pageIndex);
+      let items = cachedPage?.items;
+      let pageReachedCharacterLimit = cachedPage?.characterLimit ?? false;
+      if (cachedPage?.truncated) truncated = true;
+      if (!items) {
+        try {
+          const page = await pdf.getPage(pageIndex);
+          const releasePage = acquirePageLease(page);
+          try {
+            const viewport = page.getViewport({ scale: 1 });
+            const content = await page.getTextContent({ includeMarkedContent: false, disableNormalization: false });
+            throwIfSearchAborted(options.signal);
+            items = [];
+            let pageCharacters = 0;
+            let pageTruncated = content.items.length > MAX_PDF_SEARCH_ITEMS_PER_PAGE;
+            const remainingCharacters = Math.max(0, MAX_PDF_SEARCH_CHARACTERS - characterCount);
+            for (let sourceIndex = 0; sourceIndex < Math.min(content.items.length, MAX_PDF_SEARCH_ITEMS_PER_PAGE); sourceIndex += 1) {
+              if (sourceIndex % 256 === 0) throwIfSearchAborted(options.signal);
+              const item = content.items[sourceIndex];
+              if (!isTextItem(item)) continue;
+              if (pageCharacters + item.str.length > remainingCharacters) {
+                pageTruncated = true;
+                pageReachedCharacterLimit = true;
+                const allowed = remainingCharacters - pageCharacters;
+                if (allowed > 0) {
+                  const searchable = toPdfSearchTextItem({ ...item, str: item.str.slice(0, allowed) }, sourceIndex, pageIndex, viewport);
+                  if (searchable) items.push(searchable);
+                }
+                break;
+              }
+              const searchable = toPdfSearchTextItem(item, sourceIndex, pageIndex, viewport);
+              if (searchable) {
+                items.push(searchable);
+                pageCharacters += item.str.length;
+              }
+            }
+            if (pageTruncated) truncated = true;
+            searchPageCacheRef.current.set(pageIndex, { items, truncated: pageTruncated, characterLimit: pageReachedCharacterLimit });
+          } finally {
+            releasePage();
+          }
+        } catch (error) {
+          if ((error as { name?: string })?.name === "AbortError") throw error;
+          items = [];
+        }
+      }
+      throwIfSearchAborted(options.signal);
+      const remaining = Math.max(1, options.maxResults - results.length);
+      const pageOutcome = searchPdfTextItems(items, query, {
+        page: pageIndex,
+        label: t("page", { page: pageIndex }),
+        maxResults: remaining,
+      });
+      characterCount += pageOutcome.characterCount;
+      for (const result of pageOutcome.results) {
+        if (results.length >= options.maxResults) {
+          truncated = true;
+          break;
+        }
+        searchFragmentsRef.current.set(result.id, result.fragments);
+        results.push(result);
+      }
+      if (pageOutcome.truncated || results.length >= options.maxResults) {
+        truncated = true;
+        break;
+      }
+      if (pageReachedCharacterLimit) {
+        truncated = true;
+        break;
+      }
+      if (characterCount >= MAX_PDF_SEARCH_CHARACTERS) {
+        truncated = pageIndex < pdf.numPages;
+        break;
+      }
+      options.onProgress?.(pageIndex / pageLimit);
+      await new Promise<void>((resolve) => window.setTimeout(resolve, 0));
+    }
+    throwIfSearchAborted(options.signal);
+    options.onProgress?.(1);
+    return { results, truncated };
+  }, [t]);
+
+  const goToPdfSearchResult = useCallback((result: Parameters<NonNullable<ReaderController["goToSearch"]>>[0]) => {
+    const page = Number(result.target.split(":", 1)[0]);
+    if (!Number.isInteger(page)) return;
+    const safePage = Math.max(1, Math.min(pageCount || page, page));
+    const fragments = searchFragmentsRef.current.get(result.id);
+    setSearchFragments(fragments);
+    setActiveBlockId(undefined);
+    pendingPaperModeRef.current = undefined;
+    setViewMode("pdf");
+    pendingSingleScrollRef.current = "start";
+    setPageNumber(safePage);
+    currentLocationRef.current = { page: safePage, offset: fragments?.[0]?.top ?? 0 };
+    if (continuous) {
+      window.requestAnimationFrame(() => window.requestAnimationFrame(() => {
+        stageRef.current?.scrollTo({ top: pageLayout.offsets[safePage - 1] ?? 0, behavior: "smooth" });
+      }));
+    }
+  }, [continuous, pageCount, pageLayout.offsets]);
+
   useEffect(() => {
     navigationRef.current = {
       previous: () => {
@@ -641,6 +793,7 @@ export function PdfReader({
         }
       },
       goTo: (target) => {
+        setSearchFragments(undefined);
         const page = Number(target.split(":", 1)[0]);
         if (!Number.isInteger(page)) return;
         const safePage = Math.max(1, Math.min(pageCount || page, page));
@@ -653,9 +806,15 @@ export function PdfReader({
           setPageNumber(safePage);
         }
       },
+      search: searchPdf,
+      goToSearch: goToPdfSearchResult,
+      clearSearch: () => {
+        searchFragmentsRef.current.clear();
+        setSearchFragments(undefined);
+      },
     };
     return () => { navigationRef.current = null; };
-  }, [continuousCanvas, navigationRef, pageCount, pageLayout, showingPaper]);
+  }, [continuousCanvas, goToPdfSearchResult, navigationRef, pageCount, pageLayout, searchPdf, showingPaper]);
 
   const startAnalysis = useCallback(async () => {
     if (analysis.status === "running" || pageCount === 0) return;

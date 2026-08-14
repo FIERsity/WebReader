@@ -19,6 +19,7 @@ function actions(typography = true) {
   return {
     previous: vi.fn(), next: vi.fn(), decreaseText: vi.fn(), increaseText: vi.fn(),
     toggleOutline: vi.fn(), closePanel: vi.fn(), typography,
+    openSearch: vi.fn(),
   };
 }
 
@@ -57,5 +58,12 @@ describe("reader shortcuts", () => {
     expect(handleReaderShortcut(keyboard("ArrowRight", { ctrlKey: true }), handlers)).toBe(false);
     expect(handleReaderShortcut(keyboard("ArrowRight", { isComposing: true }), handlers)).toBe(false);
     expect(handlers.next).not.toHaveBeenCalled();
+  });
+
+  it("opens local search with Control or Command F", () => {
+    const handlers = actions();
+    expect(handleReaderShortcut(keyboard("f", { ctrlKey: true }), handlers)).toBe(true);
+    expect(handleReaderShortcut(keyboard("F", { metaKey: true }), handlers)).toBe(true);
+    expect(handlers.openSearch).toHaveBeenCalledTimes(2);
   });
 });

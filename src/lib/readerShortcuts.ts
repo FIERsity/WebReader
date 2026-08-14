@@ -4,6 +4,7 @@ interface ShortcutActions {
   decreaseText: () => void;
   increaseText: () => void;
   toggleOutline: () => void;
+  openSearch: () => void;
   closePanel: () => void;
   typography: boolean;
 }
@@ -16,7 +17,13 @@ function isEditableTarget(target: EventTarget | null): boolean {
 }
 
 export function handleReaderShortcut(event: KeyboardEvent, actions: ShortcutActions): boolean {
-  if (event.defaultPrevented || event.isComposing || event.ctrlKey || event.altKey || event.metaKey) return false;
+  if (event.defaultPrevented || event.isComposing) return false;
+  if ((event.ctrlKey || event.metaKey) && !event.altKey && event.key.toLowerCase() === "f") {
+    event.preventDefault();
+    actions.openSearch();
+    return true;
+  }
+  if (event.ctrlKey || event.altKey || event.metaKey) return false;
   const editable = isEditableTarget(event.target);
   if (editable && event.key !== "Escape") return false;
 
